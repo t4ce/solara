@@ -1,50 +1,50 @@
 # Solara
 
-Solara 是一款基于 Rust + QuickJS 的简易浏览器实验项目。
+Solara is a small experimental browser built with Rust and QuickJS.
 
-项目目标是用 Rust 负责浏览器外壳、资源加载、文档模型和渲染流程，用 QuickJS 执行页面 JavaScript，并通过一层轻量的宿主 API 将脚本运行时与浏览器环境连接起来。
+The goal is to use Rust for the browser shell, resource loading, document model, and rendering pipeline, while QuickJS executes page JavaScript through a lightweight host API that connects the script runtime to the browser environment.
 
-> 当前状态：项目仍处于早期骨架阶段，浏览器内核、QuickJS 集成和页面渲染能力正在开发中。
+> Current status: this project is still in an early skeleton stage. The browser core, QuickJS integration, and page rendering features are under development.
 
-## 特性目标
+## Goals
 
-- Rust 实现核心流程，便于控制内存、并发和系统集成。
-- QuickJS 作为嵌入式 JavaScript 引擎，提供轻量的 ECMAScript 执行环境。
-- 简化版浏览器模型，聚焦 URL 加载、HTML/CSS 解析、DOM 构建、脚本执行和基础渲染。
-- 小型、可读、可实验，适合作为学习浏览器工作原理的代码库。
+- Implement the core flow in Rust for better control over memory, concurrency, and system integration.
+- Use QuickJS as the embedded JavaScript engine for a lightweight ECMAScript runtime.
+- Build a simplified browser model focused on URL loading, HTML/CSS parsing, DOM construction, script execution, and basic rendering.
+- Keep the codebase small, readable, and experimental, making it useful for learning how browsers work internally.
 
-## 非目标
+## Non-Goals
 
-Solara 不是 Chrome、Firefox 或 Safari 的替代品。它不会在早期阶段追求完整 Web 标准兼容，也不会以内置复杂优化和生产级安全沙箱为首要目标。
+Solara is not a replacement for Chrome, Firefox, or Safari. In its early stages, it does not aim for full web standards compatibility, advanced optimization, or a production-grade security sandbox.
 
-## 环境要求
+## Requirements
 
-- Rust 1.85 或更高版本
+- Rust 1.85 or later
 - Cargo
 
-项目使用 Rust 2024 edition。
+The project uses Rust 2024 edition.
 
-## 快速开始
+## Quick Start
 
-克隆项目后，在仓库根目录执行：
+After cloning the repository, run the following command from the project root:
 
 ```bash
 cargo build
 ```
 
-运行当前程序：
+Run the current program:
 
 ```bash
 cargo run
 ```
 
-执行检查：
+Run checks:
 
 ```bash
 cargo check
 ```
 
-## 项目结构
+## Project Structure
 
 ```text
 .
@@ -56,16 +56,16 @@ cargo check
     └── main.rs
 ```
 
-## 规划
+## Roadmap
 
-- 搭建基础应用入口和命令行参数。
-- 引入 QuickJS 运行时，并封装脚本执行上下文。
-- 实现最小 HTML 解析和 DOM 数据结构。
-- 为 JavaScript 暴露精简版 `window` / `document` API。
-- 实现资源加载、导航和错误处理。
-- 增加基础布局与绘制流程。
-- 补充单元测试和示例页面。
+- Build the basic application entry point and command-line arguments.
+- Add the QuickJS runtime and wrap script execution contexts.
+- Implement minimal HTML parsing and DOM data structures.
+- Expose a reduced `window` / `document` API to JavaScript.
+- Implement resource loading, navigation, and error handling.
+- Add a basic layout and painting pipeline.
+- Add unit tests and sample pages.
 
-## 许可证
+## License
 
-Solara 使用 [MIT License](LICENSE)。
+Solara is licensed under the [MIT License](LICENSE).
