@@ -1,0 +1,22 @@
+[package]
+name = "solara"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["iamwjun"]
+description = "A small experimental browser built with Rust and QuickJS."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/iamwjun/solara"
+homepage = "https://github.com/iamwjun/solara"
+keywords = ["browser", "quickjs", "rust", "web", "renderer"]
+categories = ["gui", "web-programming"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+    "src/**/*.rs",
+]
+
+[dependencies]
