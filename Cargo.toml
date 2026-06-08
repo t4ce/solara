@@ -17,6 +17,12 @@ include = [
     "LICENSE",
     "README.md",
     "src/**/*.rs",
+    "src/**/*.wgsl",
 ]
 
 [dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+glyphon = "0.8"
+pollster = "0.4"
+wgpu = "24"
+winit = "0.30"
