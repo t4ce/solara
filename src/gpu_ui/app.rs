@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use softbuffer::Context;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -7,48 +8,47 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::gpu_ui::layout::{Button, FlexRow};
-use crate::gpu_ui::renderer::Renderer;
-use crate::gpu_ui::shapes::{ShapeInstance, circle_contains};
+use crate::gpu_ui::renderer::{DemoCircle, Renderer};
+use crate::gpu_ui::shapes::circle_contains;
 
 const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 540;
 
 pub fn run() {
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = GpuUiApp::default();
+    let context = Context::new(event_loop.owned_display_handle()).expect("failed to create context");
+    let mut app = GpuUiApp::new(context);
     event_loop.run_app(&mut app).expect("event loop failed");
 }
 
-#[derive(Default)]
-struct GpuUiApp {
+struct GpuUiApp<D> {
+    context: Context<D>,
     window: Option<Arc<Window>>,
-    renderer: Option<Renderer>,
+    renderer: Option<Renderer<D, Arc<Window>>>,
     buttons: Vec<Button>,
     demo_circle: DemoCircle,
     layout_dirty: bool,
     cursor: (f32, f32),
 }
 
-#[derive(Clone, Copy)]
-struct DemoCircle {
-    center_x: f32,
-    center_y: f32,
-    diameter: f32,
-    color: [f32; 4],
-}
-
-impl Default for DemoCircle {
-    fn default() -> Self {
+impl<D> GpuUiApp<D> {
+    fn new(context: Context<D>) -> Self {
         Self {
-            center_x: 820.0,
-            center_y: 120.0,
-            diameter: 96.0,
-            color: [0.95, 0.55, 0.15, 1.0],
+            context,
+            window: None,
+            renderer: None,
+            buttons: Vec::new(),
+            demo_circle: DemoCircle {
+                center_x: 820.0,
+                center_y: 120.0,
+                diameter: 96.0,
+                color: [0.95, 0.55, 0.15, 1.0],
+            },
+            layout_dirty: true,
+            cursor: (0.0, 0.0),
         }
     }
-}
 
-impl GpuUiApp {
     fn init_buttons(&mut self) {
         self.buttons = vec![
             Button::new("Click Me", [0.18, 0.42, 0.86, 1.0]),
@@ -101,25 +101,8 @@ impl GpuUiApp {
             return;
         };
 
-        renderer.rebuild_text(&self.buttons);
-
-        let extra_shapes = vec![ShapeInstance::circle(
-            self.demo_circle.center_x,
-            self.demo_circle.center_y,
-            self.demo_circle.diameter,
-            self.demo_circle.color,
-        )];
-
-        match renderer.render(&self.buttons, &extra_shapes) {
-            Ok(()) => {}
-            Err(wgpu::SurfaceError::Lost) => {
-                if let Some(window) = &self.window {
-                    let size = window.inner_size();
-                    renderer.resize(size.width, size.height);
-                }
-            }
-            Err(wgpu::SurfaceError::OutOfMemory) => panic!("wgpu ran out of memory"),
-            Err(err) => eprintln!("surface error: {err:?}"),
+        if let Err(err) = renderer.render(&self.buttons, &self.demo_circle) {
+            eprintln!("render error: {err:?}");
         }
     }
 }
@@ -129,14 +112,17 @@ fn rand_channel(value: f32) -> f32 {
     if next > 1.0 { next - 0.82 } else { next }
 }
 
-impl ApplicationHandler for GpuUiApp {
+impl<D> ApplicationHandler for GpuUiApp<D>
+where
+    D: softbuffer::HasDisplayHandle + Clone + 'static,
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
 
         let window_attributes = Window::default_attributes()
-            .with_title("Solara GPU UI")
+            .with_title("Solara Softbuffer UI")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
         let window = Arc::new(
@@ -145,7 +131,7 @@ impl ApplicationHandler for GpuUiApp {
                 .expect("failed to create window"),
         );
 
-        let renderer = pollster::block_on(Renderer::new(window.clone()));
+        let renderer = Renderer::new(&self.context, window.clone(), WINDOW_WIDTH, WINDOW_HEIGHT);
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.init_buttons();

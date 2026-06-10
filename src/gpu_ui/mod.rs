@@ -1,14 +1,16 @@
-//! GPU-backed immediate-mode UI demo built in five incremental steps:
+//! Software-rendered immediate-mode UI demo (winit + softbuffer):
 //!
-//! 1. winit window + wgpu colored triangle (top-left corner)
-//! 2. shape shader for arbitrary rectangles and circles
+//! 1. winit window + CPU-drawn colored triangle
+//! 2. rectangle and circle rasterization
 //! 3. mouse hit-testing to recolor rectangles on click
-//! 4. glyphon text rendering ("Click Me" labels)
+//! 4. bitmap text rendering ("Click Me" labels)
 //! 5. box-model flex row layout for multiple buttons
 
 mod app;
+mod draw;
 mod layout;
 mod renderer;
 mod shapes;
+mod text;
 
 pub use app::run;
