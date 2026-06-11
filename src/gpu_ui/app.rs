@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::gpu_ui::async_utils::block_on;
-use crate::gpu_ui::layout::{Button, FlexRow};
-use crate::gpu_ui::renderer::{DemoCircle, Renderer};
-use crate::gpu_ui::shapes::circle_contains;
+use crate::gpu_ui::html::Document;
+use crate::gpu_ui::renderer::Renderer;
+use crate::gpu_ui::shapes::ShapeInstance;
 
 const WINDOW_WIDTH: u32 = 960;
-const WINDOW_HEIGHT: u32 = 540;
+const WINDOW_HEIGHT: u32 = 720;
 
 pub fn run() {
     let event_loop = EventLoop::new().expect("failed to create event loop");
@@ -24,77 +24,29 @@ pub fn run() {
 struct GpuUiApp {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
-    buttons: Vec<Button>,
-    demo_circle: DemoCircle,
-    layout_dirty: bool,
+    document: Option<Document>,
+    instances: Vec<ShapeInstance>,
+    viewport_height: f32,
     cursor: (f32, f32),
 }
 
-impl Default for DemoCircle {
-    fn default() -> Self {
-        Self {
-            center_x: 820.0,
-            center_y: 120.0,
-            diameter: 96.0,
-            color: [0.95, 0.55, 0.15, 1.0],
-        }
-    }
-}
-
 impl GpuUiApp {
-    fn init_buttons(&mut self) {
-        self.buttons = vec![
-            Button::new("Click Me", [0.18, 0.42, 0.86, 1.0]),
-            Button::new("Click Me", [0.16, 0.62, 0.38, 1.0]),
-            Button::new("Click Me", [0.72, 0.24, 0.58, 1.0]),
-        ];
-        self.layout_dirty = true;
-    }
-
-    fn relayout(&mut self) {
-        let row = FlexRow::new((48.0, 220.0), 16.0);
-        row.layout(&mut self.buttons);
-        self.layout_dirty = false;
-    }
-
-    fn handle_click(&mut self, x: f32, y: f32) {
-        for button in &mut self.buttons {
-            if button.hit_test(x, y) {
-                button.fill = [
-                    (button.fill[0] + 0.25).min(1.0),
-                    (button.fill[1] * 0.75).max(0.0),
-                    (button.fill[2] + 0.1).min(1.0),
-                    1.0,
-                ];
-            }
-        }
-
-        if circle_contains(
-            self.demo_circle.center_x,
-            self.demo_circle.center_y,
-            self.demo_circle.diameter,
-            x,
-            y,
-        ) {
-            self.demo_circle.color = [
-                rand_channel(self.demo_circle.color[0]),
-                rand_channel(self.demo_circle.color[1]),
-                rand_channel(self.demo_circle.color[2]),
-                1.0,
-            ];
-        }
+    fn rebuild(&mut self) {
+        let Some(document) = self.document.as_mut() else {
+            return;
+        };
+        document.clamp_scroll_to(self.viewport_height);
+        self.instances.clear();
+        crate::gpu_ui::html::collect_instances(document, &mut self.instances);
     }
 
     fn render(&mut self) {
-        if self.layout_dirty {
-            self.relayout();
-        }
-
+        self.rebuild();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
 
-        match renderer.render(&self.buttons, &self.demo_circle) {
+        match renderer.render(&self.instances) {
             Ok(()) => {}
             Err(wgpu::SurfaceError::Lost) => {
                 if let Some(window) = &self.window {
@@ -108,11 +60,6 @@ impl GpuUiApp {
     }
 }
 
-fn rand_channel(value: f32) -> f32 {
-    let next = value + 0.31;
-    if next > 1.0 { next - 0.82 } else { next }
-}
-
 impl ApplicationHandler for GpuUiApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -120,7 +67,7 @@ impl ApplicationHandler for GpuUiApp {
         }
 
         let window_attributes = Window::default_attributes()
-            .with_title("Solara GPU UI")
+            .with_title("Solara demoui (wgpu)")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
         let window = Arc::new(
@@ -130,10 +77,10 @@ impl ApplicationHandler for GpuUiApp {
         );
 
         let renderer = block_on(Renderer::new(window.clone()));
+        self.viewport_height = WINDOW_HEIGHT as f32;
+        self.document = Some(Document::new(WINDOW_WIDTH as f32));
         self.window = Some(window);
         self.renderer = Some(renderer);
-        self.init_buttons();
-        self.relayout();
 
         if let Some(window) = &self.window {
             window.request_redraw();
@@ -160,11 +107,24 @@ impl ApplicationHandler for GpuUiApp {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height);
                 }
-                self.layout_dirty = true;
+                if let Some(document) = self.document.as_mut() {
+                    document.relayout(size.width as f32);
+                }
+                self.viewport_height = size.height as f32;
                 window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(document) = self.document.as_mut() {
+                    let scroll = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y * 24.0,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                    };
+                    document.scroll_by(scroll);
+                }
+                window.request_redraw();
             }
             WindowEvent::RedrawRequested => self.render(),
             WindowEvent::MouseInput {
@@ -172,8 +132,9 @@ impl ApplicationHandler for GpuUiApp {
                 button: MouseButton::Left,
                 ..
             } => {
-                let (x, y) = self.cursor;
-                self.handle_click(x, y);
+                if let Some(document) = self.document.as_mut() {
+                    document.toggle_details_at(self.cursor.0, self.cursor.1);
+                }
                 window.request_redraw();
             }
             _ => {}

@@ -3,18 +3,9 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::gpu_ui::layout::Button;
 use crate::gpu_ui::shapes::{as_bytes, cast_slice, ScreenUniform, ShapeInstance};
 
 const SHAPE_SHADER: &str = include_str!("shaders/shape.wgsl");
-const TRIANGLE_SHADER: &str = include_str!("shaders/triangle.wgsl");
-
-pub struct DemoCircle {
-    pub center_x: f32,
-    pub center_y: f32,
-    pub diameter: f32,
-    pub color: [f32; 4],
-}
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -24,8 +15,6 @@ pub struct Renderer {
     screen_buffer: wgpu::Buffer,
     shape_pipeline: wgpu::RenderPipeline,
     shape_bind_group: wgpu::BindGroup,
-    triangle_pipeline: wgpu::RenderPipeline,
-    triangle_bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -160,56 +149,6 @@ impl Renderer {
             cache: None,
         });
 
-        let triangle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("triangle_shader"),
-            source: wgpu::ShaderSource::Wgsl(TRIANGLE_SHADER.into()),
-        });
-
-        let triangle_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("triangle_pipeline_layout"),
-                bind_group_layouts: &[&screen_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let triangle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("triangle_pipeline"),
-            layout: Some(&triangle_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &triangle_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &triangle_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let triangle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("triangle_screen_bind_group"),
-            layout: &screen_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: screen_buffer.as_entire_binding(),
-            }],
-        });
-
         Self {
             surface,
             device,
@@ -218,8 +157,6 @@ impl Renderer {
             screen_buffer,
             shape_pipeline,
             shape_bind_group,
-            triangle_pipeline,
-            triangle_bind_group,
         }
     }
 
@@ -241,26 +178,11 @@ impl Renderer {
             .write_buffer(&self.screen_buffer, 0, as_bytes(&uniform));
     }
 
-    pub fn render(
-        &mut self,
-        buttons: &[Button],
-        demo_circle: &DemoCircle,
-    ) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, instances: &[ShapeInstance]) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut instances: Vec<ShapeInstance> = Vec::new();
-        for button in buttons {
-            instances.extend(ShapeInstance::from_button(button));
-        }
-        instances.push(ShapeInstance::circle(
-            demo_circle.center_x,
-            demo_circle.center_y,
-            demo_circle.diameter,
-            demo_circle.color,
-        ));
 
         let mut encoder = self
             .device
@@ -276,9 +198,9 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.08,
-                            g: 0.09,
-                            b: 0.12,
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -289,16 +211,12 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            pass.set_pipeline(&self.triangle_pipeline);
-            pass.set_bind_group(0, &self.triangle_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-
             if !instances.is_empty() {
                 let instance_buffer =
                     self.device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("shape_instances"),
-                            contents: cast_slice(&instances),
+                            contents: cast_slice(instances),
                             usage: wgpu::BufferUsages::VERTEX,
                         });
 
