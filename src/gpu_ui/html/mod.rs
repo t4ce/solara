@@ -70,12 +70,16 @@ fn toggle_details_recursive(nodes: &mut [HtmlNode], x: f32, y: f32) -> bool {
 
 fn toggle_details_in_children(node: &mut HtmlNode, x: f32, y: f32) -> bool {
     match &mut node.kind {
-        node::ElementKind::Details { children, .. }
-        | node::ElementKind::Div { children }
+        node::ElementKind::Details { children, .. } if node.open => {
+            toggle_details_recursive(children, x, y)
+        }
+        node::ElementKind::Div { children }
         | node::ElementKind::Form { children }
         | node::ElementKind::Iframe { children }
         | node::ElementKind::Dialog { children, .. } => toggle_details_recursive(children, x, y),
-        node::ElementKind::Label { control, .. } => toggle_details_recursive(std::slice::from_mut(control), x, y),
+        node::ElementKind::Label { control, .. } => {
+            toggle_details_recursive(std::slice::from_mut(control), x, y)
+        }
         _ => false,
     }
 }

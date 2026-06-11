@@ -140,7 +140,9 @@ impl ApplicationHandler for GpuUiApp {
                 window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = (position.x as f32, position.y as f32);
+                let scale = window.scale_factor();
+                let logical = position.to_logical::<f32>(scale);
+                self.cursor = (logical.x as f32, logical.y as f32);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(document) = self.document.as_mut() {

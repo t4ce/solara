@@ -1,5 +1,6 @@
 use crate::gpu_ui::geometry::{Rect, BLOCK_GAP, CONTROL_H, PAGE_PAD, TEXT_LINE};
-use crate::gpu_ui::html::node::{inline_width, ElementKind, HtmlNode, InputType};
+use crate::gpu_ui::html::node::{inline_width, ButtonType, ElementKind, HtmlNode, InputType};
+use crate::gpu_ui::text::{self, CHAR_W};
 
 pub struct LayoutContext {
     pub page_width: f32,
@@ -66,14 +67,7 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         ElementKind::Div { children } | ElementKind::Form { children } => {
             layout_children(ctx, children)
         }
-        ElementKind::Label { text: _, control } => {
-            layout_node(control, ctx);
-            let h = control.bounds.height.max(TEXT_LINE);
-            let rect = ctx.place_block(h);
-            control.bounds.x = rect.x + 120.0;
-            control.bounds.y = rect.y + (h - control.bounds.height) * 0.5;
-            rect
-        }
+        ElementKind::Label { text: _, control } => layout_label(control, ctx),
         ElementKind::Input {
             input_type,
             label,
@@ -82,7 +76,7 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
             InputType::Checkbox | InputType::Radio => ctx.place_block(TEXT_LINE),
             _ => {
                 if label.is_some() {
-                    ctx.place_block(CONTROL_H + 4.0)
+                    ctx.place_block(CONTROL_H + 18.0)
                 } else {
                     ctx.place_block(CONTROL_H)
                 }
@@ -90,9 +84,17 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         },
         ElementKind::Select { .. } => ctx.place_block(CONTROL_H),
         ElementKind::Textarea { rows, .. } => ctx.place_block(*rows as f32 * TEXT_LINE + 8.0),
-        ElementKind::Button { label, .. } => {
-            let w = (label.len() as f32 * 4.5).clamp(80.0, ctx.content_width());
-            let mut rect = ctx.place_block(CONTROL_H);
+        ElementKind::Button { label, button_type } => {
+            let prefix = match button_type {
+                ButtonType::Submit => "[submit] ",
+                ButtonType::Reset => "[reset] ",
+                ButtonType::Button => "",
+            };
+            let text = format!("{prefix}{label}");
+            let w = (text.chars().count() as f32 * CHAR_W + 24.0).clamp(80.0, ctx.content_width());
+            let lines = text::wrapped_line_count(&text, w - 16.0) as f32;
+            let h = (lines * TEXT_LINE + 12.0).max(CONTROL_H);
+            let mut rect = ctx.place_block(h);
             rect.width = w;
             rect
         }
@@ -106,7 +108,7 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         ElementKind::Image { height, .. } => ctx.place_block(*height + 8.0),
         ElementKind::Dialog { children, floating } => {
             if *floating {
-                Rect::new((ctx.page_width - 360.0) * 0.5, 120.0, 360.0, 180.0)
+                layout_floating_dialog(children, ctx)
             } else {
                 layout_children(ctx, children)
             }
@@ -114,14 +116,98 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         ElementKind::Progress { .. } => ctx.place_block(24.0),
         ElementKind::Meter { .. } => ctx.place_block(24.0),
         ElementKind::Slider { .. } => ctx.place_block(28.0),
-        ElementKind::Search { .. } => ctx.place_block(CONTROL_H + 14.0),
+        ElementKind::Search { .. } => ctx.place_block(CONTROL_H + 18.0),
         ElementKind::Color => ctx.place_block(48.0),
         ElementKind::Footer { .. } => ctx.place_block(32.0),
         ElementKind::PlainText { text } => {
-            let lines = ((text.len() as f32 * 4.5) / ctx.content_width()).ceil().max(1.0);
+            let lines = text::wrapped_line_count(text, ctx.content_width()) as f32;
             ctx.place_block(lines * TEXT_LINE)
         }
     };
+}
+
+fn layout_label(control: &mut HtmlNode, ctx: &mut LayoutContext) -> Rect {
+    let row_y = ctx.cursor_y;
+    let row_h = CONTROL_H.max(TEXT_LINE);
+    let control_x = PAGE_PAD + 120.0;
+    layout_control_in_row(control, control_x, row_y, row_h, ctx.content_width());
+    let rect = Rect::new(PAGE_PAD, row_y, ctx.content_width(), row_h);
+    ctx.cursor_y = row_y + row_h + BLOCK_GAP;
+    rect
+}
+
+fn layout_control_in_row(
+    node: &mut HtmlNode,
+    x: f32,
+    y: f32,
+    row_h: f32,
+    content_width: f32,
+) {
+    let max_w = (content_width - (x - PAGE_PAD)).max(80.0);
+    match &mut node.kind {
+        ElementKind::Input { input_type, .. } => match input_type {
+            InputType::Checkbox | InputType::Radio => {
+                node.bounds = Rect::new(x, y + 2.0, max_w, TEXT_LINE);
+            }
+            _ => {
+                node.bounds = Rect::new(
+                    x,
+                    y + (row_h - CONTROL_H) * 0.5,
+                    max_w.min(280.0),
+                    CONTROL_H,
+                );
+            }
+        },
+        ElementKind::Button { label, .. } => {
+            let text_w = label.chars().count() as f32 * CHAR_W + 24.0;
+            let w = text_w.clamp(80.0, max_w);
+            node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, w, CONTROL_H);
+        }
+        ElementKind::Select { .. } => {
+            node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, max_w.min(200.0), CONTROL_H);
+        }
+        _ => {
+            node.bounds = Rect::new(x, y, max_w, row_h);
+        }
+    }
+}
+
+fn layout_floating_dialog(children: &mut [HtmlNode], ctx: &mut LayoutContext) -> Rect {
+    let w = 360.0;
+    let x = (ctx.page_width - w) * 0.5;
+    let y = ctx.cursor_y;
+    let h = 180.0;
+    let rect = Rect::new(x, y, w, h);
+
+    let mut child_ctx = LayoutContext {
+        page_width: w - 16.0 + PAGE_PAD * 2.0,
+        cursor_y: y + 28.0,
+    };
+    for child in children.iter_mut() {
+        layout_node(child, &mut child_ctx);
+        shift_bounds_tree(child, x + 8.0 - PAGE_PAD, 0.0);
+    }
+
+    ctx.cursor_y = rect.bottom() + BLOCK_GAP;
+    rect
+}
+
+fn shift_bounds_tree(node: &mut HtmlNode, dx: f32, dy: f32) {
+    node.bounds.x += dx;
+    node.bounds.y += dy;
+    match &mut node.kind {
+        ElementKind::Details { children, .. }
+        | ElementKind::Div { children }
+        | ElementKind::Form { children }
+        | ElementKind::Iframe { children }
+        | ElementKind::Dialog { children, .. } => {
+            for child in children.iter_mut() {
+                shift_bounds_tree(child, dx, dy);
+            }
+        }
+        ElementKind::Label { control, .. } => shift_bounds_tree(control, dx, dy),
+        _ => {}
+    }
 }
 
 fn layout_details(open: bool, children: &mut [HtmlNode], ctx: &mut LayoutContext) -> Rect {

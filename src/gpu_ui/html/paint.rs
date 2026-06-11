@@ -180,38 +180,86 @@ fn paint_node(node: &HtmlNode, scroll_y: f32, theme: &Theme, out: &mut Vec<Shape
             text::draw_text_left(out, track.x + track.width + 8.0, track.y - 4.0, label, theme.text);
         }
         ElementKind::Search { value, width } => {
+            text::draw_text_left(out, bounds.x, bounds.y, "search", theme.text);
             let w = width.min(bounds.width);
-            let rect = Rect::new(bounds.x, bounds.y, w, CONTROL_H);
+            let rect = Rect::new(bounds.x, bounds.y + 14.0, w, CONTROL_H);
             paint_text_field(out, rect, value, theme);
-            text::draw_text_left(out, rect.x + 4.0, rect.y - 14.0, "search", theme.text);
         }
         ElementKind::Color => {
             stroke_rect(out, bounds, theme.border, 1.0);
-            fill_rect(out, bounds.inset(1.0), [0.8, 0.2, 0.2, 1.0]);
-            text::draw_text_left(out, bounds.x, bounds.y + bounds.height + 2.0, "color", theme.text);
+            fill_rect(
+                out,
+                Rect::new(bounds.x, bounds.y, bounds.width, bounds.height - 14.0).inset(1.0),
+                [0.8, 0.2, 0.2, 1.0],
+            );
+            text::draw_text_left(
+                out,
+                bounds.x,
+                bounds.y + bounds.height - 12.0,
+                "color",
+                theme.text,
+            );
         }
         ElementKind::Footer { text } => {
             fill_rect(out, bounds, [0.92, 0.92, 0.92, 1.0]);
             text::draw_text_left(out, bounds.x + 8.0, bounds.y + 8.0, text, theme.text);
         }
         ElementKind::PlainText { text } => {
-            text::draw_text_left(out, bounds.x, bounds.y + 2.0, text, theme.text);
+            text::draw_text_wrapped(
+                out,
+                bounds.x,
+                bounds.y + 2.0,
+                text,
+                bounds.width,
+                TEXT_LINE,
+                theme.text,
+            );
         }
     }
 }
 
 fn paint_inlines(out: &mut Vec<ShapeInstance>, bounds: Rect, inlines: &[Inline], default: [f32; 4]) {
     let mut x = bounds.x;
-    let y = bounds.y + 2.0;
+    let mut y = bounds.y + 2.0;
+    let right = bounds.x + bounds.width;
     for inline in inlines {
         let (text, color) = match inline {
             Inline::Text(t) => (t.as_str(), default),
             Inline::Bold(t) => (t.as_str(), default),
             Inline::Italic(t) => (t.as_str(), [0.35, 0.35, 0.35, 1.0]),
         };
-        text::draw_text_left(out, x, y, text, color);
-        x += text.chars().count() as f32 * 8.0;
+        (x, y) = paint_inline_run(out, x, y, bounds.x, right, text, color);
     }
+}
+
+fn paint_inline_run(
+    out: &mut Vec<ShapeInstance>,
+    mut x: f32,
+    mut y: f32,
+    left: f32,
+    right: f32,
+    text: &str,
+    color: [f32; 4],
+) -> (f32, f32) {
+    let mut line_start = x;
+    let mut line = String::new();
+    for ch in text.chars() {
+        if x + text::CHAR_W > right && x > left {
+            if !line.is_empty() {
+                text::draw_text_left(out, line_start, y, &line, color);
+                line.clear();
+            }
+            x = left;
+            line_start = x;
+            y += TEXT_LINE;
+        }
+        line.push(ch);
+        x += text::CHAR_W;
+    }
+    if !line.is_empty() {
+        text::draw_text_left(out, line_start, y, &line, color);
+    }
+    (x, y)
 }
 
 fn paint_details_summary(
@@ -266,7 +314,7 @@ fn paint_input(
                 text::draw_text_left(out, bounds.x, bounds.y, label, theme.text);
             }
             let field = if label.is_some() {
-                Rect::new(bounds.x, bounds.y + 16.0, bounds.width.min(280.0), CONTROL_H)
+                Rect::new(bounds.x, bounds.y + 18.0, bounds.width.min(280.0), CONTROL_H)
             } else {
                 Rect::new(bounds.x, bounds.y, bounds.width.min(280.0), CONTROL_H)
             };
@@ -318,7 +366,16 @@ fn paint_button(out: &mut Vec<ShapeInstance>, bounds: Rect, label: &str, button_
         ButtonType::Reset => "[reset] ",
         ButtonType::Button => "",
     };
-    text::draw_text_left(out, bounds.x + 8.0, bounds.y + 6.0, &format!("{prefix}{label}"), theme.text);
+    let text = format!("{prefix}{label}");
+    text::draw_text_wrapped(
+        out,
+        bounds.x + 8.0,
+        bounds.y + 6.0,
+        &text,
+        bounds.width - 16.0,
+        TEXT_LINE,
+        theme.text,
+    );
 }
 
 fn paint_table(out: &mut Vec<ShapeInstance>, bounds: Rect, headers: &[String], rows: &[Vec<String>], theme: &Theme) {
