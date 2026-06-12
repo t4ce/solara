@@ -2,6 +2,7 @@
 
 mod app;
 mod async_utils;
+mod css;
 mod geometry;
 mod html;
 mod renderer;

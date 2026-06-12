@@ -113,6 +113,12 @@ pub struct HtmlNode {
     pub kind: ElementKind,
     pub bounds: Rect,
     pub open: bool,
+    /// CSS class attribute (e.g. `class="plain-demo"`).
+    pub class: Option<String>,
+    /// CSS id attribute (e.g. `id="main"`).
+    pub id_attr: Option<String>,
+    /// Inline `style=""` attribute text.
+    pub style_attr: Option<String>,
 }
 
 impl HtmlNode {
@@ -122,7 +128,55 @@ impl HtmlNode {
             kind,
             bounds: Rect::default(),
             open: false,
+            class: None,
+            id_attr: None,
+            style_attr: None,
         }
+    }
+
+    pub fn with_class(mut self, class: impl Into<String>) -> Self {
+        self.class = Some(class.into());
+        self
+    }
+
+    pub fn with_style(mut self, style: impl Into<String>) -> Self {
+        self.style_attr = Some(style.into());
+        self
+    }
+}
+
+impl ElementKind {
+    pub fn css_tag_name(&self) -> Option<&'static str> {
+        Some(match self {
+            ElementKind::Heading { level: 1, .. } => "h1",
+            ElementKind::Heading { .. } => "h2",
+            ElementKind::Paragraph { .. } => "p",
+            ElementKind::HorizontalRule => "hr",
+            ElementKind::Link { .. } => "a",
+            ElementKind::OrderedList { .. } => "ol",
+            ElementKind::UnorderedList { .. } => "ul",
+            ElementKind::Details { .. } => "details",
+            ElementKind::Div { .. } => "div",
+            ElementKind::Form { .. } => "form",
+            ElementKind::Label { .. } => "label",
+            ElementKind::Input { .. } => "input",
+            ElementKind::Select { .. } => "select",
+            ElementKind::Textarea { .. } => "textarea",
+            ElementKind::Button { .. } => "button",
+            ElementKind::Table { .. } => "table",
+            ElementKind::Svg { .. } => "svg",
+            ElementKind::Canvas { .. } => "canvas",
+            ElementKind::Iframe { .. } => "iframe",
+            ElementKind::Image { .. } => "img",
+            ElementKind::Dialog { .. } => "dialog",
+            ElementKind::Progress { .. } => "progress",
+            ElementKind::Meter { .. } => "meter",
+            ElementKind::Slider { .. } => "input",
+            ElementKind::Search { .. } => "input",
+            ElementKind::Color => "color",
+            ElementKind::Footer { .. } => "footer",
+            ElementKind::PlainText { .. } => "p",
+        })
     }
 }
 

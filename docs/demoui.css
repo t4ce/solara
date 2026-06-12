@@ -1,0 +1,38 @@
+/* Demo stylesheet parsed by Servo Stylo (stylo crate). */
+
+h1 {
+    color: #1a1a2e;
+    font-size: 22px;
+}
+
+h2 {
+    color: #16213e;
+    font-size: 18px;
+}
+
+a {
+    color: #0b5ed7;
+}
+
+button {
+    background-color: #e8ecf1;
+    color: #111827;
+    border-color: #9ca3af;
+    border-width: 1px;
+    padding: 6px;
+}
+
+details {
+    background-color: #f3f4f6;
+    padding: 4px;
+}
+
+footer {
+    background-color: #eceff4;
+    color: #374151;
+}
+
+.plain-demo {
+    color: #6b21a8;
+    font-size: 13px;
+}

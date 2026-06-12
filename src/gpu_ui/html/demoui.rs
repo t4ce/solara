@@ -282,7 +282,8 @@ pub fn build_demoui_document() -> Vec<HtmlNode> {
             ElementKind::PlainText {
                 text: "(JONAS BAETHKE HALLO TEXT OKAY FRAGE GUT PROBE DREI NEUN)".into(),
             },
-        ),
+        )
+        .with_class("plain-demo"),
         HtmlNode::new(
             next(),
             ElementKind::Details {

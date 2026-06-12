@@ -117,5 +117,18 @@ pub fn queue_wrapped(
     max_height: f32,
     color: [f32; 4],
 ) {
-    push_section(batch, x, y, max_width, max_height, text, color, FONT_SCALE);
+    queue_wrapped_scaled(batch, x, y, text, max_width, max_height, color, FONT_SCALE);
+}
+
+pub fn queue_wrapped_scaled(
+    batch: &mut TextBatch,
+    x: f32,
+    y: f32,
+    text: &str,
+    max_width: f32,
+    max_height: f32,
+    color: [f32; 4],
+    scale: f32,
+) {
+    push_section(batch, x, y, max_width, max_height, text, color, scale);
 }

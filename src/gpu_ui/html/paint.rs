@@ -1,7 +1,76 @@
+use crate::gpu_ui::css::{CssEngine, ResolvedStyle};
 use crate::gpu_ui::geometry::{Rect, CONTROL_H, TEXT_LINE};
 use crate::gpu_ui::html::node::{ButtonType, ElementKind, HtmlNode, Inline, InputType, SvgChild};
 use crate::gpu_ui::shapes::ShapeInstance;
-use crate::gpu_ui::text;
+use crate::gpu_ui::text::{self, TextBatch};
+
+#[derive(Clone, Copy)]
+struct PaintStyle {
+    text: [f32; 4],
+    background: Option<[f32; 4]>,
+    font_scale: f32,
+    border_color: [f32; 4],
+    border_width: f32,
+}
+
+impl PaintStyle {
+    fn from_theme(theme: &Theme, resolved: &ResolvedStyle) -> Self {
+        Self {
+            text: resolved.color.unwrap_or(theme.text),
+            background: resolved.background_color,
+            font_scale: resolved.font_size.unwrap_or(text::FONT_SCALE),
+            border_color: resolved.border_color.unwrap_or(theme.border),
+            border_width: resolved.border_width.unwrap_or(1.0),
+        }
+    }
+
+    fn fill_background(&self, shapes: &mut Vec<ShapeInstance>, bounds: Rect) {
+        if let Some(bg) = self.background {
+            fill_rect(shapes, bounds, bg);
+        }
+    }
+
+    fn queue(
+        &self,
+        text_out: &mut TextBatch,
+        x: f32,
+        y: f32,
+        value: &str,
+        color: Option<[f32; 4]>,
+    ) {
+        text::queue_left_scaled(
+            text_out,
+            x,
+            y,
+            value,
+            color.unwrap_or(self.text),
+            self.font_scale,
+        );
+    }
+
+    fn queue_wrapped(
+        &self,
+        text_out: &mut TextBatch,
+        x: f32,
+        y: f32,
+        value: &str,
+        max_width: f32,
+        max_height: f32,
+        color: Option<[f32; 4]>,
+    ) {
+        let section_color = color.unwrap_or(self.text);
+        text::queue_wrapped_scaled(
+            text_out,
+            x,
+            y,
+            value,
+            max_width,
+            max_height,
+            section_color,
+            self.font_scale,
+        );
+    }
+}
 
 pub struct Theme {
     pub page: [f32; 4],
@@ -38,22 +107,25 @@ impl Default for Theme {
 pub fn paint_document(
     nodes: &[HtmlNode],
     scroll_y: f32,
+    css: &CssEngine,
     shapes: &mut Vec<ShapeInstance>,
-    text_out: &mut text::TextBatch,
+    text_out: &mut TextBatch,
 ) {
     let theme = Theme::default();
     for node in nodes {
-        paint_node(node, scroll_y, &theme, shapes, text_out);
+        paint_node(node, scroll_y, css, &theme, shapes, text_out);
     }
 }
 
 fn paint_node(
     node: &HtmlNode,
     scroll_y: f32,
+    css: &CssEngine,
     theme: &Theme,
     shapes: &mut Vec<ShapeInstance>,
-    text_out: &mut text::TextBatch,
+    text_out: &mut TextBatch,
 ) {
+    let style = PaintStyle::from_theme(theme, &css.resolve(node));
     let bounds = offset_rect(node.bounds, 0.0, -scroll_y);
     if bounds.bottom() < 0.0 || bounds.y > 2000.0 {
         // coarse cull for off-screen blocks
@@ -61,17 +133,25 @@ fn paint_node(
 
     match &node.kind {
         ElementKind::Heading { level, text } => {
-            let color = theme.text;
-            text::queue_left(text_out, bounds.x, bounds.y + 4.0, text, color);
+            style.queue(text_out, bounds.x, bounds.y + 4.0, text, None);
             let _ = level;
         }
-        ElementKind::Paragraph { inlines } => paint_inlines(text_out, bounds, inlines, theme.text),
+        ElementKind::Paragraph { inlines } => paint_inlines(text_out, bounds, inlines, &style),
         ElementKind::HorizontalRule => {
             stroke_rect(shapes, bounds, theme.border, 1.0);
         }
         ElementKind::Link { text, .. } => {
-            text::queue_left(text_out, bounds.x, bounds.y + 2.0, text, theme.link);
-            fill_rect(shapes, Rect::new(bounds.x, bounds.bottom() - 2.0, text.chars().count() as f32 * text::char_width_default(), 1.0), theme.link);
+            style.queue(text_out, bounds.x, bounds.y + 2.0, text, None);
+            fill_rect(
+                shapes,
+                Rect::new(
+                    bounds.x,
+                    bounds.bottom() - 2.0,
+                    text.chars().count() as f32 * text::char_width(style.font_scale),
+                    1.0,
+                ),
+                style.text,
+            );
         }
         ElementKind::OrderedList { items } => {
             for (i, item) in items.iter().enumerate() {
@@ -92,23 +172,33 @@ fn paint_node(
             summary_checkbox,
             children,
         } => {
-            paint_details_summary(shapes, text_out, bounds, summary, *summary_checkbox, node.open, theme);
+            style.fill_background(shapes, bounds);
+            paint_details_summary(
+                shapes,
+                text_out,
+                bounds,
+                summary,
+                *summary_checkbox,
+                node.open,
+                &style,
+                theme,
+            );
             if node.open {
                 let inner = Rect::new(bounds.x + 12.0, bounds.y + CONTROL_H, bounds.width - 12.0, bounds.height - CONTROL_H);
-                stroke_rect(shapes, inner, theme.border, 1.0);
+                stroke_rect(shapes, inner, style.border_color, style.border_width);
                 for child in children {
-                    paint_node(child, scroll_y, theme, shapes, text_out);
+                    paint_node(child, scroll_y, css, theme, shapes, text_out);
                 }
             }
         }
         ElementKind::Div { children } | ElementKind::Form { children } => {
             for child in children {
-                paint_node(child, scroll_y, theme, shapes, text_out);
+                paint_node(child, scroll_y, css, theme, shapes, text_out);
             }
         }
         ElementKind::Label { text, control } => {
             text::queue_left(text_out, bounds.x, bounds.y + 4.0, text, theme.text);
-            paint_node(control, scroll_y, theme, shapes, text_out);
+            paint_node(control, scroll_y, css, theme, shapes, text_out);
         }
         ElementKind::Input {
             input_type,
@@ -124,7 +214,7 @@ fn paint_node(
             paint_textarea(shapes, text_out, bounds, value, *rows, theme);
         }
         ElementKind::Button { label, button_type } => {
-            paint_button(shapes, text_out, bounds, label, button_type, theme);
+            paint_button(shapes, text_out, bounds, label, button_type, &style);
         }
         ElementKind::Table { headers, rows } => {
             paint_table(shapes, text_out, bounds, headers, rows, theme);
@@ -146,7 +236,7 @@ fn paint_node(
                 let mut cloned = child.clone();
                 let dy = inner.y - cloned.bounds.y;
                 shift_bounds(&mut cloned, 0.0, dy);
-                paint_node(&cloned, scroll_y, theme, shapes, text_out);
+                paint_node(&cloned, scroll_y, css, theme, shapes, text_out);
             }
         }
         ElementKind::Image { alt, .. } => {
@@ -161,7 +251,7 @@ fn paint_node(
                 text::queue_left(text_out, bounds.x + 8.0, bounds.y + 4.0, "dialog", theme.text);
             }
             for child in children {
-                paint_node(child, scroll_y, theme, shapes, text_out);
+                paint_node(child, scroll_y, css, theme, shapes, text_out);
             }
         }
         ElementKind::Progress { value, max } => {
@@ -208,34 +298,34 @@ fn paint_node(
             );
         }
         ElementKind::Footer { text } => {
-            fill_rect(shapes, bounds, [0.92, 0.92, 0.92, 1.0]);
-            text::queue_left(text_out, bounds.x + 8.0, bounds.y + 8.0, text, theme.text);
+            style.fill_background(shapes, bounds);
+            style.queue(text_out, bounds.x + 8.0, bounds.y + 8.0, text, None);
         }
         ElementKind::PlainText { text } => {
-            text::queue_wrapped(
+            style.queue_wrapped(
                 text_out,
                 bounds.x,
                 bounds.y + 2.0,
                 text,
                 bounds.width,
                 TEXT_LINE,
-                theme.text,
+                None,
             );
         }
     }
 }
 
-fn paint_inlines(text_out: &mut text::TextBatch, bounds: Rect, inlines: &[Inline], default: [f32; 4]) {
+fn paint_inlines(text_out: &mut text::TextBatch, bounds: Rect, inlines: &[Inline], style: &PaintStyle) {
     let mut x = bounds.x;
     let mut y = bounds.y + 2.0;
     let right = bounds.x + bounds.width;
     for inline in inlines {
         let (text, color) = match inline {
-            Inline::Text(t) => (t.as_str(), default),
-            Inline::Bold(t) => (t.as_str(), default),
+            Inline::Text(t) => (t.as_str(), style.text),
+            Inline::Bold(t) => (t.as_str(), style.text),
             Inline::Italic(t) => (t.as_str(), [0.35, 0.35, 0.35, 1.0]),
         };
-        (x, y) = paint_inline_run(text_out, x, y, bounds.x, right, text, color);
+        (x, y) = paint_inline_run(text_out, x, y, bounds.x, right, text, color, style.font_scale);
     }
 }
 
@@ -247,13 +337,15 @@ fn paint_inline_run(
     right: f32,
     text: &str,
     color: [f32; 4],
+    font_scale: f32,
 ) -> (f32, f32) {
+    let char_w = text::char_width(font_scale);
     let mut line_start = x;
     let mut line = String::new();
     for ch in text.chars() {
-        if x + text::char_width_default() > right && x > left {
+        if x + char_w > right && x > left {
             if !line.is_empty() {
-                text::queue_left(text_out, line_start, y, &line, color);
+                text::queue_left_scaled(text_out, line_start, y, &line, color, font_scale);
                 line.clear();
             }
             x = left;
@@ -261,10 +353,10 @@ fn paint_inline_run(
             y += TEXT_LINE;
         }
         line.push(ch);
-        x += text::char_width_default();
+        x += char_w;
     }
     if !line.is_empty() {
-        text::queue_left(text_out, line_start, y, &line, color);
+        text::queue_left_scaled(text_out, line_start, y, &line, color, font_scale);
     }
     (x, y)
 }
@@ -276,18 +368,21 @@ fn paint_details_summary(
     summary: &str,
     checkbox: bool,
     open: bool,
+    style: &PaintStyle,
     theme: &Theme,
 ) {
     let row = Rect::new(bounds.x, bounds.y, bounds.width, CONTROL_H);
-    fill_rect(shapes, row, [0.93, 0.93, 0.93, 1.0]);
-    stroke_rect(shapes, row, theme.border, 1.0);
-    text::queue_left(text_out, bounds.x + 8.0, bounds.y + 6.0, if open { "v" } else { ">" }, theme.text);
+    if style.background.is_none() {
+        fill_rect(shapes, row, [0.93, 0.93, 0.93, 1.0]);
+    }
+    stroke_rect(shapes, row, style.border_color, style.border_width);
+    style.queue(text_out, bounds.x + 8.0, bounds.y + 6.0, if open { "v" } else { ">" }, None);
     let mut tx = bounds.x + 24.0;
     if checkbox {
         paint_checkbox(shapes, Rect::new(tx, bounds.y + 6.0, 16.0, 16.0), open, theme);
         tx += 24.0;
     }
-    text::queue_left(text_out, tx, bounds.y + 6.0, summary, theme.text);
+    style.queue(text_out, tx, bounds.y + 6.0, summary, None);
 }
 
 fn paint_input(
@@ -367,23 +462,34 @@ fn paint_textarea(shapes: &mut Vec<ShapeInstance>, text_out: &mut text::TextBatc
     text::queue_left(text_out, rect.x + 6.0, rect.y + 6.0, value, theme.text);
 }
 
-fn paint_button(shapes: &mut Vec<ShapeInstance>, text_out: &mut text::TextBatch, bounds: Rect, label: &str, button_type: &ButtonType, theme: &Theme) {
-    fill_rect(shapes, bounds, theme.button_bg);
-    stroke_rect(shapes, bounds, theme.border, 1.0);
+fn paint_button(
+    shapes: &mut Vec<ShapeInstance>,
+    text_out: &mut text::TextBatch,
+    bounds: Rect,
+    label: &str,
+    button_type: &ButtonType,
+    style: &PaintStyle,
+) {
+    if let Some(bg) = style.background {
+        fill_rect(shapes, bounds, bg);
+    } else {
+        fill_rect(shapes, bounds, [0.9, 0.9, 0.9, 1.0]);
+    }
+    stroke_rect(shapes, bounds, style.border_color, style.border_width);
     let prefix = match button_type {
         ButtonType::Submit => "[submit] ",
         ButtonType::Reset => "[reset] ",
         ButtonType::Button => "",
     };
     let text = format!("{prefix}{label}");
-    text::queue_wrapped(
+    style.queue_wrapped(
         text_out,
         bounds.x + 8.0,
         bounds.y + 6.0,
         &text,
         bounds.width - 16.0,
         bounds.height - 12.0,
-        theme.text,
+        None,
     );
 }
 

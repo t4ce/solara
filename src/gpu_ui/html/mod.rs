@@ -3,10 +3,15 @@ mod layout;
 mod node;
 mod paint;
 
+pub use node::{ElementKind, HtmlNode};
+
 use demoui::build_demoui_document;
 use layout::{document_height, hit_test_details_summary, layout_document};
-use node::HtmlNode;
 use paint::paint_document;
+
+use crate::gpu_ui::css::CssEngine;
+
+const DEMO_STYLESHEET: &str = include_str!("../../../docs/demoui.css");
 
 #[derive(Default)]
 pub struct RenderBatch {
@@ -26,6 +31,7 @@ pub struct Document {
     pub scroll_y: f32,
     pub content_height: f32,
     page_width: f32,
+    css: CssEngine,
 }
 
 impl Document {
@@ -38,6 +44,7 @@ impl Document {
             scroll_y: 0.0,
             content_height,
             page_width,
+            css: CssEngine::from_css(DEMO_STYLESHEET),
         }
     }
 
@@ -102,6 +109,7 @@ pub fn collect_batch(document: &Document, scale: f32, batch: &mut RenderBatch) {
     paint_document(
         &document.nodes,
         document.scroll_y,
+        &document.css,
         &mut batch.shapes,
         &mut batch.text,
     );

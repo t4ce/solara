@@ -1,6 +1,6 @@
 [package]
 name = "solara"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 rust-version = "1.85"
 authors = ["iamwjun"]
@@ -19,9 +19,13 @@ include = [
     "src/**/*.rs",
     "src/**/*.wgsl",
     "src/gpu_ui/fonts/*",
+    "docs/demoui.css",
 ]
 
 [dependencies]
+stylo = { version = "0.18", default-features = false, features = ["servo"] }
+stylo_traits = { version = "0.18", default-features = false, features = ["servo"] }
+url = "2"
 wgpu = "23"
 wgpu_glyph = "0.23"
 winit = "0.30"
