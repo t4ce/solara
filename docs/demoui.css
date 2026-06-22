@@ -1,4 +1,60 @@
-/* Demo stylesheet parsed by Servo Stylo (stylo crate). */
+/* Demo stylesheet parsed by Servo Stylo (stylo crate).
+ * Every conforming HTML element is listed so coverage can be checked against HtmlTag.
+ */
+
+a, abbr, address, area, article, aside, audio, b, base, bdi, bdo,
+blockquote, body, br, button, canvas, caption, cite, code, col, colgroup,
+data, datalist, dd, del, details, dfn, dialog, div, dl, dt, em, embed,
+fieldset, figcaption, figure, footer, form, h1, h2, h3, h4, h5, h6,
+head, header, hgroup, hr, html, i, iframe, img, input, ins, kbd, label,
+legend, li, link, main, map, mark, menu, meta, meter, nav, noscript,
+object, ol, optgroup, option, output, p, picture, pre, progress, q, rp,
+rt, ruby, s, samp, script, search, section, select, selectedcontent,
+slot, small, source, span, strong, style, sub, summary, sup, table,
+tbody, td, template, textarea, tfoot, th, thead, time, title, tr, track,
+u, ul, var, video, wbr {
+    box-sizing: border-box;
+}
+
+html {
+    background-color: #f8fafc;
+    color: #111827;
+    font-size: 16px;
+}
+
+body {
+    background-color: #ffffff;
+    color: #111827;
+    font-family: sans-serif;
+    line-height: 1.5;
+    margin: 8px;
+}
+
+base, head, link, meta, script, style, template, title {
+    display: none;
+}
+
+address, article, aside, blockquote, body, dd, details, dialog, div, dl,
+dt, fieldset, figcaption, figure, footer, form, header, hgroup, hr, html,
+main, menu, nav, ol, p, pre, search, section, summary, ul {
+    display: block;
+}
+
+article, aside, footer, header, main, nav, search, section {
+    margin-block: 12px;
+}
+
+header, footer {
+    background-color: #eceff4;
+    color: #374151;
+    padding: 12px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #16213e;
+    font-weight: bold;
+    margin-block: 0.67em;
+}
 
 h1 {
     color: #1a1a2e;
@@ -6,30 +62,187 @@ h1 {
 }
 
 h2 {
-    color: #16213e;
     font-size: 18px;
+}
+
+h3 { font-size: 17px; }
+h4 { font-size: 16px; }
+h5 { font-size: 14px; }
+h6 { font-size: 13px; }
+
+p, blockquote, pre, dl, figure {
+    margin-block: 1em;
+}
+
+blockquote {
+    border-left: 4px solid #94a3b8;
+    color: #475569;
+    margin-inline: 24px;
+    padding-left: 12px;
+}
+
+pre, code, kbd, samp, var {
+    font-family: monospace;
+}
+
+pre, code, kbd, samp {
+    background-color: #f1f5f9;
+}
+
+pre {
+    overflow: auto;
+    padding: 8px;
+    white-space: pre-wrap;
 }
 
 a {
     color: #0b5ed7;
+    text-decoration: underline;
+}
+
+abbr[title], dfn {
+    text-decoration: underline dotted;
+}
+
+b, strong { font-weight: bold; }
+cite, dfn, em, i, var { font-style: italic; }
+del, s { text-decoration: line-through; }
+ins, u { text-decoration: underline; }
+mark { background-color: #fef08a; color: #111827; }
+q { quotes: "\201c" "\201d" "\2018" "\2019"; }
+rp { display: none; }
+small, sub, sup { font-size: 0.8em; }
+sub { vertical-align: sub; }
+sup { vertical-align: super; }
+
+ol, ul, menu {
+    margin-block: 1em;
+    padding-left: 40px;
+}
+
+ol { list-style-type: decimal; }
+ul, menu { list-style-type: disc; }
+li { display: list-item; }
+
+figure {
+    margin-inline: 24px;
+}
+
+figcaption, caption {
+    color: #475569;
+    font-size: 13px;
+    text-align: center;
+}
+
+.figure-placeholder {
+    background-color: #e2e8f0;
+    border: 1px solid #94a3b8;
+    min-height: 48px;
+    padding: 12px;
+}
+
+audio, canvas, embed, iframe, img, object, picture, svg, video {
+    display: inline-block;
+    margin: 4px;
+    max-width: 100%;
+    vertical-align: middle;
+}
+
+canvas, embed, iframe, img, object, svg, video {
+    border: 1px solid #9ca3af;
+}
+
+table {
+    border-collapse: collapse;
+    display: table;
+    margin-block: 1em;
+}
+
+caption { display: table-caption; }
+colgroup { display: table-column-group; }
+col { display: table-column; }
+thead { display: table-header-group; }
+tbody { display: table-row-group; }
+tfoot { display: table-footer-group; }
+tr { display: table-row; }
+td, th {
+    border: 1px solid #9ca3af;
+    display: table-cell;
+    padding: 6px 10px;
+}
+th {
+    background-color: #e5e7eb;
+    font-weight: bold;
+}
+
+button, input, select, textarea {
+    background-color: #ffffff;
+    border-color: #9ca3af;
+    border-style: solid;
+    border-width: 1px;
+    color: #111827;
+    font: inherit;
+    padding: 6px;
 }
 
 button {
     background-color: #e8ecf1;
-    color: #111827;
-    border-color: #9ca3af;
-    border-width: 1px;
-    padding: 6px;
+    cursor: pointer;
 }
+
+fieldset {
+    border: 1px solid #9ca3af;
+    margin-block: 12px;
+    padding: 12px;
+}
+
+legend, label {
+    color: #374151;
+    font-weight: bold;
+}
+
+datalist, option, optgroup { display: none; }
+select option, select optgroup { display: block; }
+output { display: inline; }
+textarea { min-height: 72px; resize: vertical; }
 
 details {
     background-color: #f3f4f6;
     padding: 4px;
 }
 
-footer {
-    background-color: #eceff4;
-    color: #374151;
+summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+dialog {
+    background-color: #ffffff;
+    border: 1px solid #64748b;
+    padding: 16px;
+}
+
+meter, progress {
+    display: inline-block;
+    min-width: 160px;
+}
+
+selectedcontent, slot {
+    display: contents;
+}
+
+noscript {
+    background-color: #fef3c7;
+    display: block;
+    padding: 8px;
+}
+
+color, slider {
+    background-color: #e2e8f0;
+    border: 1px solid #94a3b8;
+    display: inline-block;
+    min-height: 28px;
+    min-width: 160px;
 }
 
 .plain-demo {

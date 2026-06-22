@@ -1,8 +1,30 @@
-# demoui.html 使用的 HTML 元素
+# HTML 元素支持与 Demo 清单
 
-来源：[demoui.html](./demoui.html)
+实现来源：[`src/gpu_ui/html/node.rs`](../src/gpu_ui/html/node.rs)
 
-本文档汇总该 demo 页面中出现的全部 HTML 元素，含主文档、`<iframe srcdoc>` 内嵌页面，以及 `<svg>` 内的 SVG 元素。
+Demo 来源：[demoui.html](./demoui.html)
+
+`HtmlTag` 覆盖当前节点模型识别的全部标准 HTML 元素。未识别的标签名称会保留为 `HtmlTag::Custom`，以支持自定义元素。`ElementKind::Element` 为尚无专用渲染逻辑的标签提供通用子节点容器；因此“可表示”不等于已经实现该元素的全部浏览器行为。
+
+## `HtmlTag` 标准元素清单
+
+共 **113** 个标签，按字母顺序列出：
+
+| 范围 | 标签 |
+|------|------|
+| A-B | `a`, `abbr`, `address`, `area`, `article`, `aside`, `audio`, `b`, `base`, `bdi`, `bdo`, `blockquote`, `body`, `br`, `button` |
+| C-D | `canvas`, `caption`, `cite`, `code`, `col`, `colgroup`, `data`, `datalist`, `dd`, `del`, `details`, `dfn`, `dialog`, `div`, `dl`, `dt` |
+| E-H | `em`, `embed`, `fieldset`, `figcaption`, `figure`, `footer`, `form`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `head`, `header`, `hgroup`, `hr`, `html` |
+| I-M | `i`, `iframe`, `img`, `input`, `ins`, `kbd`, `label`, `legend`, `li`, `link`, `main`, `map`, `mark`, `menu`, `meta`, `meter` |
+| N-P | `nav`, `noscript`, `object`, `ol`, `optgroup`, `option`, `output`, `p`, `picture`, `pre`, `progress` |
+| Q-S | `q`, `rp`, `rt`, `ruby`, `s`, `samp`, `script`, `search`, `section`, `select`, `selectedcontent`, `slot`, `small`, `source`, `span`, `strong`, `style`, `sub`, `summary`, `sup` |
+| T-W | `table`, `tbody`, `td`, `template`, `textarea`, `tfoot`, `th`, `thead`, `time`, `title`, `tr`, `track`, `u`, `ul`, `var`, `video`, `wbr` |
+
+其中 metadata 元素可通过 `HtmlTag::is_metadata()` 判断，void 元素可通过 `HtmlTag::is_void()` 判断。标签解析不区分 ASCII 大小写，例如 `TextArea` 会规范化为 `textarea`。
+
+## Demo 使用的元素
+
+以下章节汇总 demo 中实际出现的 HTML 元素，包括主文档、`<iframe srcdoc>` 内嵌页面以及 `<svg>` 内的 SVG 元素。
 
 ---
 
@@ -137,28 +159,28 @@
 
 ---
 
-## 自定义 / 非标准元素
+## Demo 专用 / 自定义元素
 
-以下标签出现在 demo 中，并非全部浏览器原生支持，可能为 Solara 实验性组件：
+以下标签在 demo 中使用了 Solara 专用行为：
 
 | 元素 | 用途（在 demo 中） |
 |------|-------------------|
-| `<search>` | 搜索框占位（带 `value`、`width` 属性） |
-| `<color>` | 颜色相关占位（空标签，位于 `<details>` 内） |
-| `<slider>` | 滑块占位（带 `value`） |
+| `<search>` | 标准 HTML 搜索容器；demo 额外将 `value`、`width` 解释为搜索框属性 |
+| `<color>` | Solara 自定义颜色占位元素 |
+| `<slider>` | Solara 自定义滑块元素 |
 
 ---
 
-## 元素清单（按字母序）
+## Demo 覆盖汇总
 
-共 **44** 个 distinct 标签名（含 SVG 子元素与自定义标签，不含 `<!DOCTYPE html>`）：
+`demoui.html` 现包含上文列出的全部 **113** 个标准 HTML 标签。加上 SVG 的 `svg`、`rect`、`circle`、`path` 和 Solara 自定义的 `color`、`slider`，共 **119** 个 distinct 标签名，不含 `<!DOCTYPE html>`。
 
-`a`, `b`, `body`, `button`, `canvas`, `circle`, `color`, `details`, `dialog`, `div`, `footer`, `form`, `h1`, `h2`, `head`, `hr`, `html`, `i`, `iframe`, `img`, `input`, `label`, `li`, `meta`, `meter`, `ol`, `option`, `p`, `path`, `progress`, `rect`, `search`, `select`, `slider`, `summary`, `svg`, `table`, `td`, `textarea`, `th`, `title`, `tr`, `ul`
+`demoui.css` 的基础选择器同步覆盖全部 113 个标准标签，并按 metadata、块级内容、文本语义、列表、媒体、表格、表单和交互元素提供默认样式。
 
 ---
 
 ## iframe `srcdoc` 内额外出现的元素
 
-内嵌 HTML 与主文档重叠的元素：`html`, `body`, `h2`, `p`, `input`, `dialog`, `label`, `button`。
+内嵌 HTML 使用 `html`, `body`, `h2`, `p`, `input`, `dialog`, `label`, `button`，这些元素也全部出现在主文档中。
 
-内嵌文档未出现、仅主文档有的元素：`search`, `color`, `slider`, `svg` 子元素, `canvas`, `table` 系列, `progress`, `meter`, `footer`, `img`, `ol`/`ul`/`li`, `a`, `h1`, `details`/`summary` 树形结构等。
+其余标准 HTML 元素以及 SVG、自定义元素仅出现在主文档中。
