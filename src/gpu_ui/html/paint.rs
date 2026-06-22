@@ -11,16 +11,24 @@ struct PaintStyle {
     font_scale: f32,
     border_color: [f32; 4],
     border_width: f32,
+    border_visible: bool,
 }
 
 impl PaintStyle {
-    fn from_theme(theme: &Theme, resolved: &ResolvedStyle) -> Self {
+    fn from_theme(theme: &Theme, resolved: &ResolvedStyle, inherited: Option<PaintStyle>) -> Self {
         Self {
-            text: resolved.color.unwrap_or(theme.text),
+            text: resolved
+                .color
+                .or_else(|| inherited.map(|style| style.text))
+                .unwrap_or(theme.text),
             background: resolved.background_color,
-            font_scale: resolved.font_size.unwrap_or(text::FONT_SCALE),
+            font_scale: resolved
+                .font_size
+                .or_else(|| inherited.map(|style| style.font_scale))
+                .unwrap_or(text::FONT_SCALE),
             border_color: resolved.border_color.unwrap_or(theme.border),
             border_width: resolved.border_width.unwrap_or(1.0),
+            border_visible: resolved.border_color.is_some() || resolved.border_width.is_some(),
         }
     }
 
@@ -72,6 +80,32 @@ impl PaintStyle {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{PaintStyle, Theme};
+    use crate::gpu_ui::css::ResolvedStyle;
+
+    #[test]
+    fn text_properties_inherit_without_inheriting_background() {
+        let theme = Theme::default();
+        let parent = PaintStyle::from_theme(
+            &theme,
+            &ResolvedStyle {
+                color: Some([0.1, 0.2, 0.3, 1.0]),
+                background_color: Some([0.9, 0.9, 0.9, 1.0]),
+                font_size: Some(22.0),
+                ..ResolvedStyle::default()
+            },
+            None,
+        );
+        let child = PaintStyle::from_theme(&theme, &ResolvedStyle::default(), Some(parent));
+
+        assert_eq!(child.text, parent.text);
+        assert_eq!(child.font_scale, parent.font_scale);
+        assert_eq!(child.background, None);
+    }
+}
+
 pub struct Theme {
     pub page: [f32; 4],
     pub text: [f32; 4],
@@ -113,7 +147,7 @@ pub fn paint_document(
 ) {
     let theme = Theme::default();
     for node in nodes {
-        paint_node(node, scroll_y, css, &theme, shapes, text_out);
+        paint_node(node, scroll_y, css, &theme, None, shapes, text_out);
     }
 }
 
@@ -122,10 +156,11 @@ fn paint_node(
     scroll_y: f32,
     css: &CssEngine,
     theme: &Theme,
+    inherited: Option<PaintStyle>,
     shapes: &mut Vec<ShapeInstance>,
     text_out: &mut TextBatch,
 ) {
-    let style = PaintStyle::from_theme(theme, &css.resolve(node));
+    let style = PaintStyle::from_theme(theme, &css.resolve(node), inherited);
     let bounds = offset_rect(node.bounds, 0.0, -scroll_y);
     if bounds.bottom() < 0.0 || bounds.y > 2000.0 {
         // coarse cull for off-screen blocks
@@ -134,8 +169,11 @@ fn paint_node(
     match &node.kind {
         ElementKind::Element { children, .. } => {
             style.fill_background(shapes, bounds);
+            if style.border_visible {
+                stroke_rect(shapes, bounds, style.border_color, style.border_width);
+            }
             for child in children {
-                paint_node(child, scroll_y, css, theme, shapes, text_out);
+                paint_node(child, scroll_y, css, theme, Some(style), shapes, text_out);
             }
         }
         ElementKind::Heading { level, text } => {
@@ -193,18 +231,18 @@ fn paint_node(
                 let inner = Rect::new(bounds.x + 12.0, bounds.y + CONTROL_H, bounds.width - 12.0, bounds.height - CONTROL_H);
                 stroke_rect(shapes, inner, style.border_color, style.border_width);
                 for child in children {
-                    paint_node(child, scroll_y, css, theme, shapes, text_out);
+                    paint_node(child, scroll_y, css, theme, Some(style), shapes, text_out);
                 }
             }
         }
         ElementKind::Div { children } | ElementKind::Form { children } => {
             for child in children {
-                paint_node(child, scroll_y, css, theme, shapes, text_out);
+                paint_node(child, scroll_y, css, theme, Some(style), shapes, text_out);
             }
         }
         ElementKind::Label { text, control } => {
             text::queue_left(text_out, bounds.x, bounds.y + 4.0, text, theme.text);
-            paint_node(control, scroll_y, css, theme, shapes, text_out);
+            paint_node(control, scroll_y, css, theme, Some(style), shapes, text_out);
         }
         ElementKind::Input {
             input_type,
@@ -242,7 +280,7 @@ fn paint_node(
                 let mut cloned = child.clone();
                 let dy = inner.y - cloned.bounds.y;
                 shift_bounds(&mut cloned, 0.0, dy);
-                paint_node(&cloned, scroll_y, css, theme, shapes, text_out);
+                paint_node(&cloned, scroll_y, css, theme, Some(style), shapes, text_out);
             }
         }
         ElementKind::Image { alt, .. } => {
@@ -257,7 +295,7 @@ fn paint_node(
                 text::queue_left(text_out, bounds.x + 8.0, bounds.y + 4.0, "dialog", theme.text);
             }
             for child in children {
-                paint_node(child, scroll_y, css, theme, shapes, text_out);
+                paint_node(child, scroll_y, css, theme, Some(style), shapes, text_out);
             }
         }
         ElementKind::Progress { value, max } => {

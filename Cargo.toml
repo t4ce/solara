@@ -19,12 +19,15 @@ include = [
     "src/**/*.rs",
     "src/**/*.wgsl",
     "src/gpu_ui/fonts/*",
+    "docs/demoui.html",
     "docs/demoui.css",
 ]
 
 [dependencies]
+scraper = "0.27.0"
 stylo = { version = "0.18", default-features = false, features = ["servo"] }
 stylo_traits = { version = "0.18", default-features = false, features = ["servo"] }
+ureq = "3.3.0"
 url = "2"
 wgpu = "23"
 wgpu_glyph = "0.23"

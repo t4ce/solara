@@ -5,6 +5,7 @@ mod async_utils;
 mod css;
 mod geometry;
 mod html;
+mod loader;
 mod renderer;
 mod shapes;
 mod text;

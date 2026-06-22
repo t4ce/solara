@@ -51,7 +51,10 @@ impl CssEngine {
 fn selector_matches(sel: &SimpleSelector, node: &HtmlNode, tag: &str) -> bool {
     match sel {
         SimpleSelector::Tag(name) => tag == name,
-        SimpleSelector::Class(class) => node.class.as_deref() == Some(class.as_str()),
+        SimpleSelector::Class(class) => node
+            .class
+            .as_deref()
+            .is_some_and(|classes| classes.split_ascii_whitespace().any(|value| value == class)),
         SimpleSelector::Id(id) => node.id_attr.as_deref() == Some(id.as_str()),
     }
 }
@@ -121,7 +124,7 @@ fn parse_one_selector(input: &str) -> Option<SimpleSelector> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_one_selector, selector_matches};
+    use super::{CssEngine, parse_one_selector, selector_matches};
     use crate::gpu_ui::html::HtmlNode;
 
     #[test]
@@ -140,5 +143,19 @@ mod tests {
             &article,
             article.kind.css_tag_name(),
         ));
+    }
+
+    #[test]
+    fn resolves_default_styles_and_multiple_classes() {
+        let mut button = HtmlNode::element(1, "button", Vec::new());
+        button.class = Some("control primary".into());
+        let css = CssEngine::from_css(
+            "button { background-color: #ffffff; border-width: 2px; } .primary { color: #123456; }",
+        );
+        let resolved = css.resolve(&button);
+
+        assert!(resolved.background_color.is_some());
+        assert_eq!(resolved.border_width, Some(2.0));
+        assert!(resolved.color.is_some());
     }
 }

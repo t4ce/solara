@@ -32,10 +32,17 @@ After cloning the repository, run the following command from the project root:
 cargo build
 ```
 
-Run the current program:
+Run the default page from `docs/demoui.html`:
 
 ```bash
 cargo run
+```
+
+Load a local file or remote URL:
+
+```bash
+cargo run -- ./docs/demoui.html
+cargo run -- https://example.com/
 ```
 
 Run checks:

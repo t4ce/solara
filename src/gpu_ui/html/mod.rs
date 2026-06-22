@@ -1,17 +1,15 @@
-mod demoui;
 mod layout;
 mod node;
 mod paint;
+mod parser;
 
-pub use node::{ElementKind, HtmlNode, HtmlTag};
+pub use node::HtmlNode;
 
-use demoui::build_demoui_document;
 use layout::{document_height, hit_test_details_summary, layout_document};
 use paint::paint_document;
+use parser::parse_html;
 
 use crate::gpu_ui::css::CssEngine;
-
-const DEMO_STYLESHEET: &str = include_str!("../../../docs/demoui.css");
 
 #[derive(Default)]
 pub struct RenderBatch {
@@ -35,8 +33,8 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn new(page_width: f32) -> Self {
-        let mut nodes = build_demoui_document();
+    pub fn from_html(html: &str, css: &str, page_width: f32) -> Self {
+        let mut nodes = parse_html(html);
         layout_document(&mut nodes, page_width);
         let content_height = document_height(&nodes);
         Self {
@@ -44,7 +42,7 @@ impl Document {
             scroll_y: 0.0,
             content_height,
             page_width,
-            css: CssEngine::from_css(DEMO_STYLESHEET),
+            css: CssEngine::from_css(css),
         }
     }
 

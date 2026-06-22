@@ -8,19 +8,25 @@ use winit::window::{Window, WindowId};
 
 use crate::gpu_ui::async_utils::block_on;
 use crate::gpu_ui::html::{Document, RenderBatch};
+use crate::gpu_ui::loader::{LoadedPage, load_page};
 use crate::gpu_ui::renderer::Renderer;
 
 const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 720;
 
-pub fn run() {
-    let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = GpuUiApp::default();
-    event_loop.run_app(&mut app).expect("event loop failed");
+pub fn run(source: Option<String>) -> Result<(), String> {
+    let page = load_page(source.as_deref())?;
+    println!("Loading {}", page.url);
+    let event_loop =
+        EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
+    let mut app = GpuUiApp::new(page);
+    event_loop
+        .run_app(&mut app)
+        .map_err(|error| format!("event loop failed: {error}"))
 }
 
-#[derive(Default)]
 struct GpuUiApp {
+    initial_page: Option<LoadedPage>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     document: Option<Document>,
@@ -31,6 +37,19 @@ struct GpuUiApp {
 }
 
 impl GpuUiApp {
+    fn new(page: LoadedPage) -> Self {
+        Self {
+            initial_page: Some(page),
+            window: None,
+            renderer: None,
+            document: None,
+            batch: RenderBatch::default(),
+            viewport_height: 0.0,
+            scale_factor: 1.0,
+            cursor: (0.0, 0.0),
+        }
+    }
+
     fn logical_size(window: &Window) -> (f32, f32) {
         let scale = window.scale_factor();
         let size = window.inner_size().to_logical::<f32>(scale);
@@ -84,8 +103,13 @@ impl ApplicationHandler for GpuUiApp {
             return;
         }
 
+        let page = self
+            .initial_page
+            .take()
+            .expect("initial page must be available before creating the window");
+        let window_title = format!("{} - Solara", page.title);
         let window_attributes = Window::default_attributes()
-            .with_title("Solara demoui (wgpu)")
+            .with_title(window_title)
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
         let window = Arc::new(
@@ -98,7 +122,7 @@ impl ApplicationHandler for GpuUiApp {
         self.scale_factor = window.scale_factor() as f32;
         let (width, height) = Self::logical_size(&window);
         self.viewport_height = height;
-        self.document = Some(Document::new(width));
+        self.document = Some(Document::from_html(&page.html, &page.css, width));
         self.window = Some(window);
         self.renderer = Some(renderer);
 
@@ -141,7 +165,7 @@ impl ApplicationHandler for GpuUiApp {
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = window.scale_factor();
                 let logical = position.to_logical::<f32>(scale);
-                self.cursor = (logical.x as f32, logical.y as f32);
+                self.cursor = (logical.x, logical.y);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(document) = self.document.as_mut() {
