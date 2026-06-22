@@ -1,5 +1,7 @@
 use crate::gpu_ui::geometry::{Rect, BLOCK_GAP, CONTROL_H, PAGE_PAD, TEXT_LINE};
-use crate::gpu_ui::html::node::{inline_width, ButtonType, ElementKind, HtmlNode, InputType};
+use crate::gpu_ui::html::node::{
+    inline_width, ButtonType, ElementKind, HtmlNode, HtmlTag, InputType,
+};
 use crate::gpu_ui::text;
 
 pub struct LayoutContext {
@@ -44,6 +46,13 @@ pub fn document_height(nodes: &[HtmlNode]) -> f32 {
 
 fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
     node.bounds = match &mut node.kind {
+        ElementKind::Element { tag, children } => {
+            if tag.is_metadata() || matches!(tag, HtmlTag::Head) {
+                Rect::new(PAGE_PAD, ctx.cursor_y, ctx.content_width(), 0.0)
+            } else {
+                layout_children(ctx, children)
+            }
+        }
         ElementKind::Heading { level, .. } => {
             let h = if *level == 1 { 32.0 } else { 24.0 };
             ctx.place_block(h)
@@ -197,7 +206,8 @@ fn shift_bounds_tree(node: &mut HtmlNode, dx: f32, dy: f32) {
     node.bounds.x += dx;
     node.bounds.y += dy;
     match &mut node.kind {
-        ElementKind::Details { children, .. }
+        ElementKind::Element { children, .. }
+        | ElementKind::Details { children, .. }
         | ElementKind::Div { children }
         | ElementKind::Form { children }
         | ElementKind::Iframe { children }

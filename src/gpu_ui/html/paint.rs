@@ -132,6 +132,12 @@ fn paint_node(
     }
 
     match &node.kind {
+        ElementKind::Element { children, .. } => {
+            style.fill_background(shapes, bounds);
+            for child in children {
+                paint_node(child, scroll_y, css, theme, shapes, text_out);
+            }
+        }
         ElementKind::Heading { level, text } => {
             style.queue(text_out, bounds.x, bounds.y + 4.0, text, None);
             let _ = level;
@@ -572,7 +578,8 @@ fn shift_bounds(node: &mut HtmlNode, dx: f32, dy: f32) {
     node.bounds.x += dx;
     node.bounds.y += dy;
     match &mut node.kind {
-        ElementKind::Details { children, .. }
+        ElementKind::Element { children, .. }
+        | ElementKind::Details { children, .. }
         | ElementKind::Div { children }
         | ElementKind::Form { children }
         | ElementKind::Iframe { children }

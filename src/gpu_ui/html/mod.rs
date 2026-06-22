@@ -3,7 +3,7 @@ mod layout;
 mod node;
 mod paint;
 
-pub use node::{ElementKind, HtmlNode};
+pub use node::{ElementKind, HtmlNode, HtmlTag};
 
 use demoui::build_demoui_document;
 use layout::{document_height, hit_test_details_summary, layout_document};
@@ -93,7 +93,8 @@ fn toggle_details_in_children(node: &mut HtmlNode, x: f32, y: f32) -> bool {
         node::ElementKind::Details { children, .. } if node.open => {
             toggle_details_recursive(children, x, y)
         }
-        node::ElementKind::Div { children }
+        node::ElementKind::Element { children, .. }
+        | node::ElementKind::Div { children }
         | node::ElementKind::Form { children }
         | node::ElementKind::Iframe { children }
         | node::ElementKind::Dialog { children, .. } => toggle_details_recursive(children, x, y),

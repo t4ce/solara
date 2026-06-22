@@ -9,7 +9,7 @@ struct CssRule {
 
 #[derive(Clone, Debug)]
 enum SimpleSelector {
-    Tag(&'static str),
+    Tag(String),
     Class(String),
     Id(String),
 }
@@ -48,9 +48,9 @@ impl CssEngine {
     }
 }
 
-fn selector_matches(sel: &SimpleSelector, node: &HtmlNode, tag: Option<&str>) -> bool {
+fn selector_matches(sel: &SimpleSelector, node: &HtmlNode, tag: &str) -> bool {
     match sel {
-        SimpleSelector::Tag(name) => tag == Some(name.as_ref()),
+        SimpleSelector::Tag(name) => tag == name,
         SimpleSelector::Class(class) => node.class.as_deref() == Some(class.as_str()),
         SimpleSelector::Id(id) => node.id_attr.as_deref() == Some(id.as_str()),
     }
@@ -116,40 +116,29 @@ fn parse_one_selector(input: &str) -> Option<SimpleSelector> {
     if let Some(class) = s.strip_prefix('.') {
         return Some(SimpleSelector::Class(class.trim().to_string()));
     }
-    Some(SimpleSelector::Tag(tag_name_to_static(s)))
+    Some(SimpleSelector::Tag(s.to_ascii_lowercase()))
 }
 
-fn tag_name_to_static(tag: &str) -> &'static str {
-    match tag {
-        "h1" => "h1",
-        "h2" => "h2",
-        "h3" => "h3",
-        "p" => "p",
-        "a" => "a",
-        "button" => "button",
-        "details" => "details",
-        "summary" => "summary",
-        "footer" => "footer",
-        "input" => "input",
-        "label" => "label",
-        "div" => "div",
-        "form" => "form",
-        "hr" => "hr",
-        "ol" => "ol",
-        "ul" => "ul",
-        "li" => "li",
-        "table" => "table",
-        "dialog" => "dialog",
-        "canvas" => "canvas",
-        "iframe" => "iframe",
-        "img" => "img",
-        "svg" => "svg",
-        "textarea" => "textarea",
-        "select" => "select",
-        "progress" => "progress",
-        "meter" => "meter",
-        "search" => "search",
-        "color" => "color",
-        _ => "div",
+#[cfg(test)]
+mod tests {
+    use super::{parse_one_selector, selector_matches};
+    use crate::gpu_ui::html::HtmlNode;
+
+    #[test]
+    fn tag_selectors_support_all_and_custom_elements() {
+        let article = HtmlNode::element(1, "article", Vec::new());
+        let article_selector = parse_one_selector("ARTICLE").unwrap();
+        let custom_selector = parse_one_selector("my-widget").unwrap();
+
+        assert!(selector_matches(
+            &article_selector,
+            &article,
+            article.kind.css_tag_name(),
+        ));
+        assert!(!selector_matches(
+            &custom_selector,
+            &article,
+            article.kind.css_tag_name(),
+        ));
     }
 }

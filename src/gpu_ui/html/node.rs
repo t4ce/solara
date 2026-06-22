@@ -1,5 +1,191 @@
 use crate::gpu_ui::geometry::Rect;
 
+macro_rules! define_html_tags {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        /// HTML elements defined by the HTML Living Standard.
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum HtmlTag {
+            $($variant,)+
+            /// A valid custom element or an element unknown to this version of Solara.
+            Custom(String),
+        }
+
+        #[allow(dead_code)]
+        impl HtmlTag {
+            pub const STANDARD_NAMES: &'static [&'static str] = &[$($name,)+];
+
+            /// Parses an ASCII case-insensitive HTML tag name.
+            ///
+            /// Unknown names are retained because HTML permits custom elements and
+            /// requires user agents to preserve unknown elements in the DOM.
+            pub fn from_name(name: &str) -> Self {
+                let normalized = name.to_ascii_lowercase();
+                match normalized.as_str() {
+                    $($name => Self::$variant,)+
+                    _ => Self::Custom(normalized),
+                }
+            }
+
+            pub fn as_str(&self) -> &str {
+                match self {
+                    $(Self::$variant => $name,)+
+                    Self::Custom(name) => name,
+                }
+            }
+
+            pub fn is_metadata(&self) -> bool {
+                matches!(
+                    self,
+                    Self::Base
+                        | Self::Link
+                        | Self::Meta
+                        | Self::Noscript
+                        | Self::Script
+                        | Self::Style
+                        | Self::Template
+                        | Self::Title
+                )
+            }
+
+            pub fn is_void(&self) -> bool {
+                matches!(
+                    self,
+                    Self::Area
+                        | Self::Base
+                        | Self::Br
+                        | Self::Col
+                        | Self::Embed
+                        | Self::Hr
+                        | Self::Img
+                        | Self::Input
+                        | Self::Link
+                        | Self::Meta
+                        | Self::Source
+                        | Self::Track
+                        | Self::Wbr
+                )
+            }
+        }
+    };
+}
+
+define_html_tags! {
+    A => "a",
+    Abbr => "abbr",
+    Address => "address",
+    Area => "area",
+    Article => "article",
+    Aside => "aside",
+    Audio => "audio",
+    B => "b",
+    Base => "base",
+    Bdi => "bdi",
+    Bdo => "bdo",
+    Blockquote => "blockquote",
+    Body => "body",
+    Br => "br",
+    Button => "button",
+    Canvas => "canvas",
+    Caption => "caption",
+    Cite => "cite",
+    Code => "code",
+    Col => "col",
+    Colgroup => "colgroup",
+    Data => "data",
+    Datalist => "datalist",
+    Dd => "dd",
+    Del => "del",
+    Details => "details",
+    Dfn => "dfn",
+    Dialog => "dialog",
+    Div => "div",
+    Dl => "dl",
+    Dt => "dt",
+    Em => "em",
+    Embed => "embed",
+    Fieldset => "fieldset",
+    Figcaption => "figcaption",
+    Figure => "figure",
+    Footer => "footer",
+    Form => "form",
+    H1 => "h1",
+    H2 => "h2",
+    H3 => "h3",
+    H4 => "h4",
+    H5 => "h5",
+    H6 => "h6",
+    Head => "head",
+    Header => "header",
+    Hgroup => "hgroup",
+    Hr => "hr",
+    Html => "html",
+    I => "i",
+    Iframe => "iframe",
+    Img => "img",
+    Input => "input",
+    Ins => "ins",
+    Kbd => "kbd",
+    Label => "label",
+    Legend => "legend",
+    Li => "li",
+    Link => "link",
+    Main => "main",
+    Map => "map",
+    Mark => "mark",
+    Menu => "menu",
+    Meta => "meta",
+    Meter => "meter",
+    Nav => "nav",
+    Noscript => "noscript",
+    Object => "object",
+    Ol => "ol",
+    Optgroup => "optgroup",
+    Option => "option",
+    Output => "output",
+    P => "p",
+    Picture => "picture",
+    Pre => "pre",
+    Progress => "progress",
+    Q => "q",
+    Rp => "rp",
+    Rt => "rt",
+    Ruby => "ruby",
+    S => "s",
+    Samp => "samp",
+    Script => "script",
+    Search => "search",
+    Section => "section",
+    Select => "select",
+    Selectedcontent => "selectedcontent",
+    Slot => "slot",
+    Small => "small",
+    Source => "source",
+    Span => "span",
+    Strong => "strong",
+    Style => "style",
+    Sub => "sub",
+    Summary => "summary",
+    Sup => "sup",
+    Table => "table",
+    Tbody => "tbody",
+    Td => "td",
+    Template => "template",
+    Textarea => "textarea",
+    Tfoot => "tfoot",
+    Th => "th",
+    Thead => "thead",
+    Time => "time",
+    Title => "title",
+    Tr => "tr",
+    Track => "track",
+    U => "u",
+    Ul => "ul",
+    Var => "var",
+    Video => "video",
+    Wbr => "wbr",
+}
+
 #[derive(Clone, Debug)]
 pub enum Inline {
     Text(String),
@@ -51,6 +237,12 @@ pub enum SvgChild {
 
 #[derive(Clone, Debug)]
 pub enum ElementKind {
+    /// An HTML element that does not need a specialized renderer yet.
+    #[allow(dead_code)]
+    Element {
+        tag: HtmlTag,
+        children: Vec<HtmlNode>,
+    },
     Heading { level: u8, text: String },
     Paragraph { inlines: Vec<Inline> },
     HorizontalRule,
@@ -134,6 +326,17 @@ impl HtmlNode {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn element(id: u32, tag_name: &str, children: Vec<HtmlNode>) -> Self {
+        Self::new(
+            id,
+            ElementKind::Element {
+                tag: HtmlTag::from_name(tag_name),
+                children,
+            },
+        )
+    }
+
     pub fn with_class(mut self, class: impl Into<String>) -> Self {
         self.class = Some(class.into());
         self
@@ -146,10 +349,17 @@ impl HtmlNode {
 }
 
 impl ElementKind {
-    pub fn css_tag_name(&self) -> Option<&'static str> {
-        Some(match self {
-            ElementKind::Heading { level: 1, .. } => "h1",
-            ElementKind::Heading { .. } => "h2",
+    pub fn css_tag_name(&self) -> &str {
+        match self {
+            ElementKind::Element { tag, .. } => tag.as_str(),
+            ElementKind::Heading { level, .. } => match level {
+                1 => "h1",
+                2 => "h2",
+                3 => "h3",
+                4 => "h4",
+                5 => "h5",
+                _ => "h6",
+            },
             ElementKind::Paragraph { .. } => "p",
             ElementKind::HorizontalRule => "hr",
             ElementKind::Link { .. } => "a",
@@ -171,12 +381,12 @@ impl ElementKind {
             ElementKind::Dialog { .. } => "dialog",
             ElementKind::Progress { .. } => "progress",
             ElementKind::Meter { .. } => "meter",
-            ElementKind::Slider { .. } => "input",
-            ElementKind::Search { .. } => "input",
+            ElementKind::Slider { .. } => "slider",
+            ElementKind::Search { .. } => "search",
             ElementKind::Color => "color",
             ElementKind::Footer { .. } => "footer",
             ElementKind::PlainText { .. } => "p",
-        })
+        }
     }
 }
 
@@ -198,4 +408,58 @@ pub fn inline_to_string(inlines: &[Inline]) -> String {
             Inline::Text(t) | Inline::Bold(t) | Inline::Italic(t) => t.as_str(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ElementKind, HtmlTag};
+
+    #[test]
+    fn parses_every_standard_tag_name() {
+        for name in HtmlTag::STANDARD_NAMES {
+            let tag = HtmlTag::from_name(name);
+            assert_eq!(tag.as_str(), *name);
+            assert!(!matches!(tag, HtmlTag::Custom(_)));
+        }
+    }
+
+    #[test]
+    fn tag_parsing_is_ascii_case_insensitive() {
+        assert_eq!(HtmlTag::from_name("H1"), HtmlTag::H1);
+        assert_eq!(HtmlTag::from_name("TextArea"), HtmlTag::Textarea);
+    }
+
+    #[test]
+    fn preserves_custom_elements() {
+        let tag = HtmlTag::from_name("My-Widget");
+        assert_eq!(tag, HtmlTag::Custom("my-widget".into()));
+        assert_eq!(tag.as_str(), "my-widget");
+    }
+
+    #[test]
+    fn constructs_generic_elements_from_tag_names() {
+        let node = super::HtmlNode::element(1, "ARTICLE", Vec::new());
+        assert_eq!(node.kind.css_tag_name(), "article");
+    }
+
+    #[test]
+    fn classifies_metadata_and_void_elements() {
+        assert!(HtmlTag::Meta.is_metadata());
+        assert!(HtmlTag::Meta.is_void());
+        assert!(HtmlTag::Style.is_metadata());
+        assert!(!HtmlTag::Style.is_void());
+        assert!(!HtmlTag::Article.is_metadata());
+        assert!(!HtmlTag::Article.is_void());
+    }
+
+    #[test]
+    fn maps_all_heading_levels_to_css_tags() {
+        for level in 1..=6 {
+            let heading = ElementKind::Heading {
+                level,
+                text: String::new(),
+            };
+            assert_eq!(heading.css_tag_name(), format!("h{level}"));
+        }
+    }
 }
