@@ -74,6 +74,8 @@ The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its 
 ├── Cargo.lock
 ├── LICENSE
 ├── README.md
+├── crates
+│   └── solara-wgpu-shim
 ├── docs
 │   └── engine-handoff.md
 ├── src
@@ -82,6 +84,11 @@ The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its 
 └── vendor
     └── RustQJSDom
 ```
+
+`crates/solara-wgpu-shim` is the sole direct owner of WGPU and the glyph stack.
+It exposes the full upstream APIs plus Solara's shared GPU context, per-window
+surface, acquired frame, and painter composition. The root application depends
+only on this shim.
 
 ## Roadmap
 

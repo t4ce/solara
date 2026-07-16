@@ -19,7 +19,7 @@ include = [
     "preview.html",
     "src/**/*.rs",
     "src/**/*.wgsl",
-    "src/gpu_ui/fonts/*",
+    "crates/solara-wgpu-shim/**",
     "docs/demoui.html",
     "docs/demoui.css",
     "docs/engine-handoff.md",
@@ -27,13 +27,17 @@ include = [
 
 [features]
 default = ["gpu"]
-gpu = ["dep:wgpu", "dep:wgpu_text"]
+gpu = ["dep:solara-wgpu-shim"]
 
 [dependencies]
 env_logger = "0.11.11"
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+solara-wgpu-shim = { version = "0.1.0", path = "crates/solara-wgpu-shim", optional = true }
 ureq = "3.3.0"
 url = "2"
-wgpu = { version = "30.0.0", optional = true }
-wgpu_text = { version = "30.0.0", optional = true }
 winit = "0.30"
+
+[workspace]
+members = ["crates/solara-wgpu-shim"]
+exclude = ["vendor/RustQJSDom"]
+resolver = "3"

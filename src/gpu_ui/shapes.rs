@@ -2,13 +2,6 @@ use crate::gpu_ui::geometry::Rect;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ScreenUniform {
-    pub size: [f32; 2],
-    pub _pad: [f32; 2],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub struct ShapeInstance {
     pub pos_size: [f32; 4],
     pub color: [f32; 4],
@@ -41,18 +34,6 @@ impl ShapeInstance {
             shape_type: SHAPE_CIRCLE,
             _pad: 0,
         }
-    }
-}
-
-pub fn as_bytes<T: Copy>(value: &T) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
-    }
-}
-
-pub fn cast_slice<T: Copy>(values: &[T]) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
     }
 }
 

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Solara is a Rust 2024 experimental browser and GPU-rendering project. `src/main.rs` is the binary entry point. Most implementation lives under `src/gpu_ui/`: `app.rs` manages the window and event loop, `loader.rs` fetches page resources, and `renderer.rs` owns WGPU rendering. HTML parsing, layout, and painting are grouped in `src/gpu_ui/html/`; CSS resolution is in `src/gpu_ui/css/`. Keep WGSL shaders in `src/gpu_ui/shaders/` and bundled fonts in `src/gpu_ui/fonts/`.
+Solara is a Rust 2024 experimental browser and GPU-rendering project. `src/main.rs` is the binary entry point. Most implementation lives under `src/gpu_ui/`: `app.rs` manages the window and event loop, `loader.rs` fetches page resources, and `renderer.rs` adapts Solara paint records to the dedicated `crates/solara-wgpu-shim` boundary. That shim owns WGPU, glyph rendering, WGSL, and its bundled font. HTML parsing, layout, and painting are grouped in `src/gpu_ui/html/`.
 
 Reference material and demo inputs live in `docs/`, notably `demoui.html`, `demoui.css`, and `elements.md`. Cargo build output belongs in `target/` and must not be committed.
 

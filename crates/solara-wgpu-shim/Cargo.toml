@@ -1,0 +1,13 @@
+[package]
+name = "solara-wgpu-shim"
+version = "0.1.0"
+edition = "2024"
+description = "Solara's complete WGPU surface, painter, and glyph dependency boundary."
+readme = "README.md"
+license = "MIT"
+publish = false
+
+[dependencies]
+wgpu = "30.0.0"
+wgpu_text = "30.0.0"
+winit = "0.30"

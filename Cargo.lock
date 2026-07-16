@@ -2435,8 +2435,16 @@ version = "0.0.6"
 dependencies = [
  "env_logger",
  "rust-qjs-dom",
+ "solara-wgpu-shim",
  "ureq",
  "url",
+ "winit",
+]
+
+[[package]]
+name = "solara-wgpu-shim"
+version = "0.1.0"
+dependencies = [
  "wgpu",
  "wgpu_text",
  "winit",

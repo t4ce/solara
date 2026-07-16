@@ -142,7 +142,10 @@ impl PageWindow {
 
     fn render(&mut self) {
         self.rebuild();
-        match self.renderer.render(&self.batch.shapes, &self.batch.text) {
+        match self
+            .renderer
+            .render(&self.batch.shapes, &self.batch.text.sections)
+        {
             Ok(()) => {}
             Err(RenderError::Lost | RenderError::Outdated) => {
                 let size = self.window.inner_size();
