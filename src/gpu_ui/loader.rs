@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use rust_qjs_dom::{AssetRequest, DomArtifact, DomEngine, DomNode, LoadedStylesheet};
+use rust_qjs_dom::{DomArtifact, DomEngine, DomNode, LoadedStylesheet};
 use url::Url;
 
 pub const DEFAULT_HTML_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/demoui.html");
@@ -31,16 +31,6 @@ pub fn load_page(input: Option<&str>) -> Result<LoadedPage, String> {
         .favicon_href
         .as_deref()
         .and_then(|href| resolve_resource_url(url.as_str(), base_href, href).ok());
-    trace_asset_requests(&artifact, &url);
-    if let Some(favicon_url) = &favicon_url {
-        log::trace!(
-            target: "solara::assets",
-            "favicon_resolved raw_url={:?} resolved_url={} action=metadata-only no_fetch=1",
-            artifact.extracted.favicon_href.as_deref().unwrap_or_default(),
-            favicon_url,
-        );
-    }
-
     let title = find_element(&artifact.document, "title")
         .map(raw_text_content)
         .as_deref()
@@ -73,69 +63,6 @@ fn resolve_resource_url(
     };
     base.join(raw_url)
         .map_err(|error| format!("invalid resource URL {raw_url:?}: {error}"))
-}
-
-fn resolve_asset_request(document_url: &Url, request: &AssetRequest) -> Result<Url, String> {
-    let base = Url::parse(&request.base_url)
-        .or_else(|_| document_url.join(&request.base_url))
-        .map_err(|error| {
-            format!(
-                "invalid asset base URL {:?} for {:?}: {error}",
-                request.base_url, request.raw_url
-            )
-        })?;
-    base.join(&request.raw_url)
-        .map_err(|error| format!("invalid asset URL {:?}: {error}", request.raw_url))
-}
-
-fn trace_asset_requests(artifact: &DomArtifact, document_url: &Url) {
-    let total = artifact.asset_index.requests.len();
-    log::trace!(
-        target: "solara::assets",
-        "asset_batch document_url={} backend={} requests={} kinds={:?} external_css_loaded={} css_load_errors={:?} action=log-only no_fetch=1",
-        document_url,
-        artifact.asset_index.backend,
-        total,
-        artifact.asset_index.kind_counts,
-        artifact.style_index.external_stylesheet_count,
-        artifact.style_index.load_errors,
-    );
-    for (index, request) in artifact.asset_index.requests.iter().enumerate() {
-        match resolve_asset_request(document_url, request) {
-            Ok(resolved_url) => log::trace!(
-                target: "solara::assets",
-                "asset_request index={} total={} kind={} initiator={} tag={} attribute={} path={} media_type={:?} raw_url={:?} base_url={:?} resolved_url={} action={} no_fetch={}",
-                index + 1,
-                total,
-                request.kind,
-                request.initiator,
-                request.tag,
-                request.attribute,
-                request.path,
-                request.media_type,
-                request.raw_url,
-                request.base_url,
-                resolved_url,
-                if request.kind == "stylesheet" { "css-pipeline" } else { "log-only" },
-                if request.kind == "stylesheet" { 0 } else { 1 },
-            ),
-            Err(error) => log::trace!(
-                target: "solara::assets",
-                "asset_request index={} total={} kind={} initiator={} tag={} attribute={} path={} media_type={:?} raw_url={:?} base_url={:?} resolution_error={:?} action=log-only no_fetch=1",
-                index + 1,
-                total,
-                request.kind,
-                request.initiator,
-                request.tag,
-                request.attribute,
-                request.path,
-                request.media_type,
-                request.raw_url,
-                request.base_url,
-                error,
-            ),
-        }
-    }
 }
 
 fn find_element<'a>(node: &'a DomNode, tag: &str) -> Option<&'a DomNode> {

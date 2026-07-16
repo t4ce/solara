@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 
-use wgpu_glyph::ab_glyph::{Font, FontArc};
+use wgpu_text::glyph_brush::ab_glyph::{Font, FontArc};
 
 pub const FONT_SCALE: f32 = 14.0;
 

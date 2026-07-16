@@ -11,7 +11,7 @@ use winit::window::{Window, WindowId};
 use crate::gpu_ui::async_utils::block_on;
 use crate::gpu_ui::html::{Document, RenderBatch};
 use crate::gpu_ui::loader::{LoadedPage, load_page};
-use crate::gpu_ui::renderer::{Renderer, RendererContext};
+use crate::gpu_ui::renderer::{RenderError, Renderer, RendererContext};
 
 const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 720;
@@ -86,6 +86,7 @@ struct PageWindow {
     viewport_height: f32,
     scale_factor: f32,
     cursor: (f32, f32),
+    _favicon_url: Option<Url>,
 }
 
 impl PageWindow {
@@ -95,15 +96,6 @@ impl PageWindow {
         index: usize,
         renderer_context: Option<Arc<RendererContext>>,
     ) -> Self {
-        if let Some(favicon_url) = &page.favicon_url {
-            log::trace!(
-                target: "solara::assets",
-                "page_favicon window={} url={} action=window-metadata no_fetch=1",
-                page.label,
-                favicon_url,
-            );
-        }
-
         let window_title = format!("{} — {} - Solara", page.title, page.label);
         let offset = 48.0 + index as f64 * 72.0;
         let window_attributes = Window::default_attributes()
@@ -128,6 +120,7 @@ impl PageWindow {
             viewport_height,
             scale_factor,
             cursor: (0.0, 0.0),
+            _favicon_url: page.favicon_url,
         }
     }
 
@@ -147,12 +140,11 @@ impl PageWindow {
         self.rebuild();
         match self.renderer.render(&self.batch.shapes, &self.batch.text) {
             Ok(()) => {}
-            Err(wgpu::SurfaceError::Lost) => {
+            Err(RenderError::Lost | RenderError::Outdated) => {
                 let size = self.window.inner_size();
                 self.renderer.resize(size.width, size.height);
             }
-            Err(wgpu::SurfaceError::OutOfMemory) => panic!("wgpu ran out of memory"),
-            Err(error) => eprintln!("surface error: {error:?}"),
+            Err(RenderError::Validation) => eprintln!("surface validation error"),
         }
     }
 

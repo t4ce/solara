@@ -19,7 +19,7 @@ Solara is not a replacement for Chrome, Firefox, or Safari. In its early stages,
 
 ## Requirements
 
-- Rust 1.85 or later
+- Rust 1.96.1 or later
 - Cargo
 - A C compiler for the vendored QuickJS runtime
 
@@ -53,13 +53,6 @@ Load a local file or remote URL:
 ```bash
 cargo run -- ./docs/demoui.html
 cargo run -- https://example.com/
-```
-
-Inspect log-only image/media/asset handoff records without fetching or decoding
-those resources:
-
-```bash
-RUST_LOG=solara::assets=trace cargo run -- https://example.com/
 ```
 
 Run checks:

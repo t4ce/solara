@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
-use wgpu_glyph::{GlyphBrushBuilder, Section, Text};
+use wgpu_text::{
+    BrushBuilder, TextBrush,
+    glyph_brush::{Section, Text},
+};
 use winit::window::Window;
 
 use crate::gpu_ui::shapes::{ScreenUniform, ShapeInstance, as_bytes, cast_slice};
@@ -16,8 +19,7 @@ pub struct Renderer {
     screen_buffer: wgpu::Buffer,
     shape_pipeline: wgpu::RenderPipeline,
     shape_bind_group: wgpu::BindGroup,
-    glyph_brush: wgpu_glyph::GlyphBrush<()>,
-    staging_belt: wgpu::util::StagingBelt,
+    text_brush: TextBrush,
 }
 
 /// GPU objects shared by every Solara window. A single WebGPU device/queue
@@ -27,6 +29,13 @@ pub struct RendererContext {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum RenderError {
+    Lost,
+    Outdated,
+    Validation,
 }
 
 impl Renderer {
@@ -41,10 +50,10 @@ impl Renderer {
                 (surface, context)
             }
             None => {
-                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::all(),
-                    ..Default::default()
-                });
+                let mut instance_descriptor =
+                    wgpu::InstanceDescriptor::new_without_display_handle();
+                instance_descriptor.backends = wgpu::Backends::all();
+                let instance = wgpu::Instance::new(instance_descriptor);
                 let surface = instance
                     .create_surface(window.clone())
                     .expect("failed to create surface");
@@ -53,19 +62,18 @@ impl Renderer {
                         power_preference: wgpu::PowerPreference::HighPerformance,
                         compatible_surface: Some(&surface),
                         force_fallback_adapter: false,
+                        apply_limit_buckets: false,
                     })
                     .await
                     .expect("failed to find adapter");
                 let (device, queue) = adapter
-                    .request_device(
-                        &wgpu::DeviceDescriptor {
-                            label: Some("gpu_ui_device"),
-                            required_features: wgpu::Features::empty(),
-                            required_limits: wgpu::Limits::default(),
-                            memory_hints: wgpu::MemoryHints::Performance,
-                        },
-                        None,
-                    )
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: Some("gpu_ui_device"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                        ..Default::default()
+                    })
                     .await
                     .expect("failed to create device");
                 (
@@ -91,15 +99,13 @@ impl Renderer {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
-            // Keep presentation conservative across Solara's two surfaces.
-            // WGPU 23's Vulkan path can otherwise recycle a present semaphore
-            // before the compositor has released the prior swapchain image.
-            desired_maximum_frame_latency: 1,
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&context.device, &config);
 
@@ -155,8 +161,8 @@ impl Renderer {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("shape_pipeline_layout"),
-                    bind_group_layouts: &[&screen_bind_group_layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&screen_bind_group_layout)],
+                    immediate_size: 0,
                 });
 
         let shape_pipeline = context
@@ -167,11 +173,11 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shape_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<ShapeInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Uint32],
-                }],
+                })],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -190,12 +196,16 @@ impl Renderer {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
-        let glyph_brush =
-            GlyphBrushBuilder::using_font(text::font().clone()).build(&context.device, format);
+        let text_brush = BrushBuilder::using_font(text::font().clone()).build(
+            &context.device,
+            config.width,
+            config.height,
+            format,
+        );
 
         let renderer = Self {
             surface,
@@ -204,8 +214,7 @@ impl Renderer {
             screen_buffer,
             shape_pipeline,
             shape_bind_group,
-            glyph_brush,
-            staging_belt: wgpu::util::StagingBelt::new(4096),
+            text_brush,
         };
         renderer.update_screen_uniform(renderer.config.width, renderer.config.height);
         renderer
@@ -221,6 +230,8 @@ impl Renderer {
             self.config.height = height;
             self.surface.configure(&self.context.device, &self.config);
             self.update_screen_uniform(width, height);
+            self.text_brush
+                .resize_view(width as f32, height as f32, &self.context.queue);
         }
     }
 
@@ -235,8 +246,10 @@ impl Renderer {
     }
 
     fn queue_text(&mut self, text: &TextBatch) {
-        for section in &text.sections {
-            self.glyph_brush.queue(Section {
+        let sections = text
+            .sections
+            .iter()
+            .map(|section| Section {
                 screen_position: (section.x, section.y),
                 bounds: (section.width, section.height),
                 text: vec![
@@ -245,16 +258,28 @@ impl Renderer {
                         .with_scale(section.scale),
                 ],
                 ..Section::default()
-            });
-        }
+            })
+            .collect::<Vec<_>>();
+        self.text_brush
+            .queue(&self.context.device, &self.context.queue, &sections)
+            .expect("glyph queue failed");
     }
 
     pub fn render(
         &mut self,
         shapes: &[ShapeInstance],
         text: &TextBatch,
-    ) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
+    ) -> Result<(), RenderError> {
+        let output = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(output)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => return Err(RenderError::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost => return Err(RenderError::Lost),
+            wgpu::CurrentSurfaceTexture::Validation => return Err(RenderError::Validation),
+        };
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -273,6 +298,7 @@ impl Renderer {
                 label: Some("gpu_ui_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -287,6 +313,7 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             if !shapes.is_empty() {
@@ -304,26 +331,11 @@ impl Renderer {
                 pass.set_vertex_buffer(0, instance_buffer.slice(..));
                 pass.draw(0..6, 0..shapes.len() as u32);
             }
+
+            self.text_brush.draw(&mut pass);
         }
-
-        self.glyph_brush
-            .draw_queued(
-                &self.context.device,
-                &mut self.staging_belt,
-                &mut encoder,
-                &view,
-                self.config.width,
-                self.config.height,
-            )
-            .expect("glyph draw failed");
-
-        self.staging_belt.finish();
         self.context.queue.submit(std::iter::once(encoder.finish()));
-        self.staging_belt.recall();
-        output.present();
-        // This demo renders only on explicit redraws, so waiting here is cheap
-        // and prevents cross-surface present work from outliving its semaphore.
-        let _ = self.context.device.poll(wgpu::Maintain::Wait);
+        self.context.queue.present(output);
         Ok(())
     }
 }

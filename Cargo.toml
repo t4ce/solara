@@ -2,8 +2,8 @@
 name = "solara"
 version = "0.0.6"
 edition = "2024"
-rust-version = "1.85"
-authors = ["iamwjun"]
+rust-version = "1.96"
+authors = ["iamwjun","t4ce"]
 description = "A small experimental browser built with Rust and QuickJS."
 readme = "README.md"
 license = "MIT"
@@ -14,6 +14,7 @@ categories = ["gui", "web-programming"]
 include = [
     "Cargo.toml",
     "Cargo.lock",
+    "rust-toolchain.toml",
     "LICENSE",
     "README.md",
     "preview.html",
@@ -26,11 +27,10 @@ include = [
 ]
 
 [dependencies]
-env_logger = "0.11"
-log = "0.4"
+env_logger = "0.11.11"
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 ureq = "3.3.0"
 url = "2"
-wgpu = "23"
-wgpu_glyph = "0.23"
+wgpu = "30.0.0"
+wgpu_text = "30.0.0"
 winit = "0.30"

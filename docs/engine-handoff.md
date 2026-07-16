@@ -18,12 +18,10 @@ HTML bytes
 `LoadedPage` creates one `DomEngine` with a browser-owned linked-stylesheet callback. Parse5 runs once; Lightning CSS then computes the artifact style table. `Document` owns both the artifact and that same engine. The renderer adapter in `src/gpu_ui/html/parser.rs` copies per-node style references, and paint consumes authored properties from `styleIndex` without reparsing CSS.
 
 RustQJSDom also enumerates HTML, CSS `url(...)`, image, `srcset`, media,
-iframe, script, preload, and favicon requests. Solara resolves them with the
-`url` crate and logs rich request records at `solara::assets=trace`. Except for
-linked stylesheets, this is intentionally `action=log-only no_fetch=1`: no
-decode, cache, media stream, image upload, or paint binding is part of this
-migration. The resolved favicon URL remains on `LoadedPage`/`GpuUiApp` for a
-future window-icon loader.
+iframe, script, preload, and favicon requests. Except for linked stylesheets,
+Solara preserves this index as metadata only: no decode, cache, media stream,
+image upload, or paint binding is part of this migration. The resolved favicon
+URL remains on `LoadedPage`/`GpuUiApp` for a future window-icon loader.
 
 The previous Solara `CssEngine`, Stylo dependencies, and duplicate stylesheet
 collector have been removed. RustQJSDom/Lightning CSS is the sole CSS path.
@@ -43,12 +41,6 @@ The current `docs/demoui.html` is the integration fixture. Before removing `scra
 
 ```bash
 cargo test --locked
-```
-
-To inspect the asset boundary:
-
-```bash
-RUST_LOG=solara::assets=trace cargo run -- https://example.com/
 ```
 
 ## Submodule workflow
