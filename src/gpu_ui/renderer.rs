@@ -96,7 +96,10 @@ impl Renderer {
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            // Keep presentation conservative across Solara's two surfaces.
+            // WGPU 23's Vulkan path can otherwise recycle a present semaphore
+            // before the compositor has released the prior swapchain image.
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&context.device, &config);
 
@@ -318,6 +321,9 @@ impl Renderer {
         self.context.queue.submit(std::iter::once(encoder.finish()));
         self.staging_belt.recall();
         output.present();
+        // This demo renders only on explicit redraws, so waiting here is cheap
+        // and prevents cross-surface present work from outliving its semaphore.
+        let _ = self.context.device.poll(wgpu::Maintain::Wait);
         Ok(())
     }
 }
