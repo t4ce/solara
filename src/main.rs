@@ -1,7 +1,16 @@
-mod gpu_ui;
+// trueos-blueprint: features=["ui4-solara-text"]
+// Blueprint build-plan marker; the target-aware attribute below is the active #![no_std] policy.
+#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+mod gpu_ui;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod trueos_app;
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 const DEFAULT_LOG_FILTER: &str = "warn,sctk_adwaita::buttons=error";
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 fn main() {
     let mut logger = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER),
@@ -16,4 +25,9 @@ fn main() {
         eprintln!("solara: {error}");
         std::process::exit(1);
     }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn main() {
+    trueos_app::run();
 }

@@ -29,14 +29,18 @@ include = [
 default = []
 gpu-text-only = ["solara-wgpu-shim/text-only"]
 gpu-visual-debug = ["solara-wgpu-shim/visual-debug"]
+trueos-blueprint = []
 
-[dependencies]
+[target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
 env_logger = "0.11.11"
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 solara-wgpu-shim = { version = "0.1.0", path = "crates/solara-wgpu-shim" }
 ureq = "3.3.0"
 url = "2"
 winit = "0.30"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 
 [workspace]
 members = ["crates/solara-wgpu-shim"]
