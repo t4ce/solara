@@ -11,8 +11,7 @@ const SHAPE_SHADER: &str = include_str!("shaders/shape.wgsl");
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    context: Arc<RendererContext>,
     config: wgpu::SurfaceConfiguration,
     screen_buffer: wgpu::Buffer,
     shape_pipeline: wgpu::RenderPipeline,
@@ -21,41 +20,67 @@ pub struct Renderer {
     staging_belt: wgpu::util::StagingBelt,
 }
 
+/// GPU objects shared by every Solara window. A single WebGPU device/queue
+/// keeps submissions and presentation synchronization coherent across surfaces.
+pub struct RendererContext {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
 impl Renderer {
-    pub async fn new(window: Arc<Window>) -> Self {
+    pub async fn new(window: Arc<Window>, shared: Option<Arc<RendererContext>>) -> Self {
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
+        let (surface, context) = match shared {
+            Some(context) => {
+                let surface = context
+                    .instance
+                    .create_surface(window.clone())
+                    .expect("failed to create surface");
+                (surface, context)
+            }
+            None => {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::all(),
+                    ..Default::default()
+                });
+                let surface = instance
+                    .create_surface(window.clone())
+                    .expect("failed to create surface");
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                    .expect("failed to find adapter");
+                let (device, queue) = adapter
+                    .request_device(
+                        &wgpu::DeviceDescriptor {
+                            label: Some("gpu_ui_device"),
+                            required_features: wgpu::Features::empty(),
+                            required_limits: wgpu::Limits::default(),
+                            memory_hints: wgpu::MemoryHints::Performance,
+                        },
+                        None,
+                    )
+                    .await
+                    .expect("failed to create device");
+                (
+                    surface,
+                    Arc::new(RendererContext {
+                        instance,
+                        adapter,
+                        device,
+                        queue,
+                    }),
+                )
+            }
+        };
 
-        let surface = instance
-            .create_surface(window.clone())
-            .expect("failed to create surface");
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("failed to find adapter");
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("gpu_ui_device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
-            .await
-            .expect("failed to create device");
-
-        let caps = surface.get_capabilities(&adapter);
+        let caps = surface.get_capabilities(&context.adapter);
         let format = caps
             .formats
             .iter()
@@ -73,55 +98,67 @@ impl Renderer {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        surface.configure(&context.device, &config);
 
         let screen_uniform = ScreenUniform {
             size: [config.width as f32, config.height as f32],
             _pad: [0.0, 0.0],
         };
-        let screen_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("screen_uniform"),
-            contents: as_bytes(&screen_uniform),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let screen_buffer = context
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("screen_uniform"),
+                contents: as_bytes(&screen_uniform),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let screen_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("screen_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+            context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("screen_bind_group_layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let shape_bind_group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shape_screen_bind_group"),
+                layout: &screen_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+                    resource: screen_buffer.as_entire_binding(),
                 }],
             });
 
-        let shape_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shape_screen_bind_group"),
-            layout: &screen_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: screen_buffer.as_entire_binding(),
-            }],
-        });
-
-        let shape_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shape_shader"),
-            source: wgpu::ShaderSource::Wgsl(SHAPE_SHADER.into()),
-        });
-
-        let shape_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shape_pipeline_layout"),
-                bind_group_layouts: &[&screen_bind_group_layout],
-                push_constant_ranges: &[],
+        let shape_shader = context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("shape_shader"),
+                source: wgpu::ShaderSource::Wgsl(SHAPE_SHADER.into()),
             });
 
-        let shape_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let shape_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("shape_pipeline_layout"),
+                    bind_group_layouts: &[&screen_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+        let shape_pipeline = context
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shape_pipeline"),
             layout: Some(&shape_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -155,12 +192,11 @@ impl Renderer {
         });
 
         let glyph_brush =
-            GlyphBrushBuilder::using_font(text::font().clone()).build(&device, format);
+            GlyphBrushBuilder::using_font(text::font().clone()).build(&context.device, format);
 
         let renderer = Self {
             surface,
-            device,
-            queue,
+            context,
             config,
             screen_buffer,
             shape_pipeline,
@@ -172,11 +208,15 @@ impl Renderer {
         renderer
     }
 
+    pub fn context(&self) -> Arc<RendererContext> {
+        Arc::clone(&self.context)
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface.configure(&self.context.device, &self.config);
             self.update_screen_uniform(width, height);
         }
     }
@@ -186,7 +226,8 @@ impl Renderer {
             size: [width as f32, height as f32],
             _pad: [0.0, 0.0],
         };
-        self.queue
+        self.context
+            .queue
             .write_buffer(&self.screen_buffer, 0, as_bytes(&uniform));
     }
 
@@ -217,11 +258,12 @@ impl Renderer {
 
         self.queue_text(text);
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("gpu_ui_encoder"),
-            });
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("gpu_ui_encoder"),
+                });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -246,7 +288,8 @@ impl Renderer {
 
             if !shapes.is_empty() {
                 let instance_buffer =
-                    self.device
+                    self.context
+                        .device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("shape_instances"),
                             contents: cast_slice(shapes),
@@ -262,7 +305,7 @@ impl Renderer {
 
         self.glyph_brush
             .draw_queued(
-                &self.device,
+                &self.context.device,
                 &mut self.staging_belt,
                 &mut encoder,
                 &view,
@@ -272,7 +315,7 @@ impl Renderer {
             .expect("glyph draw failed");
 
         self.staging_belt.finish();
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.context.queue.submit(std::iter::once(encoder.finish()));
         self.staging_belt.recall();
         output.present();
         Ok(())

@@ -41,7 +41,8 @@ Then run the following command from the project root:
 cargo build --locked
 ```
 
-Run the default page from `docs/demoui.html`:
+Run the two-window demo. It opens the bundled `docs/demoui.html` and the
+extended repository-root `demoui.html` as independent browser windows:
 
 ```bash
 cargo run
