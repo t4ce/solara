@@ -12,7 +12,8 @@ use crate::gpu_ui::text::{self, TextBatch};
 struct PaintStyle {
     text: [f32; 4],
     background: Option<[f32; 4]>,
-    font_scale: f32,
+    font_size: f32,
+    line_height: f32,
     border_color: [f32; 4],
     border_width: f32,
     border_visible: bool,
@@ -26,10 +27,14 @@ impl PaintStyle {
                 .or_else(|| inherited.map(|style| style.text))
                 .unwrap_or(theme.text),
             background: resolved.background_color,
-            font_scale: resolved
+            font_size: resolved
                 .font_size
-                .or_else(|| inherited.map(|style| style.font_scale))
-                .unwrap_or(text::FONT_SCALE),
+                .or_else(|| inherited.map(|style| style.font_size))
+                .unwrap_or(text::DEFAULT_FONT_SIZE),
+            line_height: resolved
+                .line_height
+                .or_else(|| inherited.map(|style| style.line_height))
+                .unwrap_or_else(|| text::metrics(text::DEFAULT_FONT_SIZE).natural_line_height()),
             border_color: resolved.border_color.unwrap_or(theme.border),
             border_width: resolved.border_width.unwrap_or(1.0),
             border_visible: resolved.border_color.is_some() || resolved.border_width.is_some(),
@@ -50,13 +55,14 @@ impl PaintStyle {
         value: &str,
         color: Option<[f32; 4]>,
     ) {
-        text::queue_left_scaled(
+        text::queue_left_sized(
             text_out,
             x,
             y,
             value,
             color.unwrap_or(self.text),
-            self.font_scale,
+            self.font_size,
+            self.line_height,
         );
     }
 
@@ -71,7 +77,7 @@ impl PaintStyle {
         color: Option<[f32; 4]>,
     ) {
         let section_color = color.unwrap_or(self.text);
-        text::queue_wrapped_scaled(
+        text::queue_wrapped_sized(
             text_out,
             x,
             y,
@@ -79,7 +85,8 @@ impl PaintStyle {
             max_width,
             max_height,
             section_color,
-            self.font_scale,
+            self.font_size,
+            self.line_height,
         );
     }
 }
@@ -108,7 +115,8 @@ mod tests {
         let child = PaintStyle::from_theme(&theme, &ResolvedStyle::default(), Some(parent));
 
         assert_eq!(child.text, parent.text);
-        assert_eq!(child.font_scale, parent.font_scale);
+        assert_eq!(child.font_size, parent.font_size);
+        assert_eq!(child.line_height, parent.line_height);
         assert_eq!(child.background, None);
     }
 
@@ -130,7 +138,7 @@ mod tests {
                 height: 30.0,
                 text: "clipped".to_string(),
                 color: [1.0; 4],
-                scale: 14.0,
+                font_size: 14.0,
             }],
         };
         clip_text(&mut text, clip);
@@ -233,7 +241,7 @@ fn paint_node(
                 Rect::new(
                     bounds.x,
                     bounds.bottom() - 2.0,
-                    text.chars().count() as f32 * text::char_width(style.font_scale),
+                    text.chars().count() as f32 * text::char_width(style.font_size),
                     1.0,
                 ),
                 style.text,
@@ -512,7 +520,7 @@ fn paint_node(
                 bounds.y + 2.0,
                 text,
                 bounds.width,
-                TEXT_LINE,
+                bounds.height,
                 None,
             );
         }
@@ -542,7 +550,8 @@ fn paint_inlines(
             right,
             text,
             color,
-            style.font_scale,
+            style.font_size,
+            style.line_height,
         );
     }
 }
@@ -555,26 +564,43 @@ fn paint_inline_run(
     right: f32,
     text: &str,
     color: [f32; 4],
-    font_scale: f32,
+    font_size: f32,
+    line_height: f32,
 ) -> (f32, f32) {
-    let char_w = text::char_width(font_scale);
+    let char_w = text::char_width(font_size);
     let mut line_start = x;
     let mut line = String::new();
     for ch in text.chars() {
         if x + char_w > right && x > left {
             if !line.is_empty() {
-                text::queue_left_scaled(text_out, line_start, y, &line, color, font_scale);
+                text::queue_left_sized(
+                    text_out,
+                    line_start,
+                    y,
+                    &line,
+                    color,
+                    font_size,
+                    line_height,
+                );
                 line.clear();
             }
             x = left;
             line_start = x;
-            y += TEXT_LINE;
+            y += line_height;
         }
         line.push(ch);
         x += char_w;
     }
     if !line.is_empty() {
-        text::queue_left_scaled(text_out, line_start, y, &line, color, font_scale);
+        text::queue_left_sized(
+            text_out,
+            line_start,
+            y,
+            &line,
+            color,
+            font_size,
+            line_height,
+        );
     }
     (x, y)
 }

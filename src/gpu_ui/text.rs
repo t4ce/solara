@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-pub const FONT_SCALE: f32 = 14.0;
+pub const DEFAULT_FONT_SIZE: f32 = 14.0;
 
 #[derive(Clone, Debug, Default)]
 pub struct TextSection {
@@ -10,7 +10,9 @@ pub struct TextSection {
     pub height: f32,
     pub text: String,
     pub color: [f32; 4],
-    pub scale: f32,
+    /// CSS `font-size` in logical pixels. The renderer converts this em size
+    /// to the bundled font's `ab_glyph` scale at the final handoff.
+    pub font_size: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -24,20 +26,16 @@ impl TextBatch {
     }
 }
 
-pub fn char_width(scale: f32) -> f32 {
-    solara_wgpu_shim::char_width(scale)
+pub fn char_width(font_size: f32) -> f32 {
+    solara_wgpu_shim::char_width(font_size)
 }
 
-pub fn char_width_default() -> f32 {
-    char_width(FONT_SCALE)
+pub fn chars_per_line_sized(max_width: f32, font_size: f32) -> usize {
+    (max_width / char_width(font_size)).floor().max(1.0) as usize
 }
 
-pub fn chars_per_line(max_width: f32) -> usize {
-    (max_width / char_width_default()).floor().max(1.0) as usize
-}
-
-pub fn wrapped_line_count(text: &str, max_width: f32) -> usize {
-    let per_line = chars_per_line(max_width);
+pub fn wrapped_line_count_sized(text: &str, max_width: f32, font_size: f32) -> usize {
+    let per_line = chars_per_line_sized(max_width, font_size);
     text.chars().count().max(1).div_ceil(per_line)
 }
 
@@ -50,7 +48,7 @@ pub fn scale_text_batch(batch: &mut TextBatch, scale: f32) {
         section.y *= scale;
         section.width *= scale;
         section.height *= scale;
-        section.scale *= scale;
+        section.font_size *= scale;
     }
 }
 
@@ -62,9 +60,9 @@ fn push_section(
     height: f32,
     text: &str,
     color: [f32; 4],
-    scale: f32,
+    font_size: f32,
 ) {
-    if text.is_empty() {
+    if text.is_empty() || font_size <= 0.0 {
         return;
     }
     batch.sections.push(TextSection {
@@ -74,25 +72,46 @@ fn push_section(
         height,
         text: text.to_string(),
         color,
-        scale,
+        font_size,
     });
 }
 
 pub fn queue_left(batch: &mut TextBatch, x: f32, y: f32, text: &str, color: [f32; 4]) {
-    queue_left_scaled(batch, x, y, text, color, FONT_SCALE);
+    queue_left_at_size(batch, x, y, text, color, DEFAULT_FONT_SIZE);
 }
 
-pub fn queue_left_scaled(
+pub fn queue_left_at_size(
     batch: &mut TextBatch,
     x: f32,
     y: f32,
     text: &str,
     color: [f32; 4],
-    scale: f32,
+    font_size: f32,
 ) {
-    let cw = char_width(scale);
+    queue_left_sized(
+        batch,
+        x,
+        y,
+        text,
+        color,
+        font_size,
+        metrics(font_size).natural_line_height(),
+    );
+}
+
+pub fn queue_left_sized(
+    batch: &mut TextBatch,
+    x: f32,
+    y: f32,
+    text: &str,
+    color: [f32; 4],
+    font_size: f32,
+    line_height: f32,
+) {
+    let cw = char_width(font_size);
     let width = text.chars().count() as f32 * cw;
-    push_section(batch, x, y, width, scale * 1.25, text, color, scale);
+    let height = line_height.max(metrics(font_size).natural_line_height());
+    push_section(batch, x, y, width, height, text, color, font_size);
 }
 
 #[allow(dead_code)]
@@ -105,10 +124,21 @@ pub fn queue_wrapped(
     max_height: f32,
     color: [f32; 4],
 ) {
-    queue_wrapped_scaled(batch, x, y, text, max_width, max_height, color, FONT_SCALE);
+    let line_height = metrics(DEFAULT_FONT_SIZE).natural_line_height();
+    queue_wrapped_sized(
+        batch,
+        x,
+        y,
+        text,
+        max_width,
+        max_height,
+        color,
+        DEFAULT_FONT_SIZE,
+        line_height,
+    );
 }
 
-pub fn queue_wrapped_scaled(
+pub fn queue_wrapped_sized(
     batch: &mut TextBatch,
     x: f32,
     y: f32,
@@ -116,7 +146,36 @@ pub fn queue_wrapped_scaled(
     max_width: f32,
     max_height: f32,
     color: [f32; 4],
-    scale: f32,
+    font_size: f32,
+    line_height: f32,
 ) {
-    push_section(batch, x, y, max_width, max_height, text, color, scale);
+    if text.is_empty() || font_size <= 0.0 {
+        return;
+    }
+    let per_line = chars_per_line_sized(max_width, font_size);
+    let line_advance = line_height.max(0.0);
+    let max_lines = if line_advance > 0.0 {
+        (max_height / line_advance).floor().max(1.0) as usize
+    } else {
+        usize::MAX
+    };
+    let section_height = line_advance.max(metrics(font_size).natural_line_height());
+    let characters = text.chars().collect::<Vec<_>>();
+    for (line_index, chunk) in characters.chunks(per_line).take(max_lines).enumerate() {
+        let line = chunk.iter().collect::<String>();
+        push_section(
+            batch,
+            x,
+            y + line_index as f32 * line_advance,
+            max_width,
+            section_height,
+            &line,
+            color,
+            font_size,
+        );
+    }
+}
+
+pub fn metrics(font_size: f32) -> solara_wgpu_shim::FontMetrics {
+    solara_wgpu_shim::font_metrics(font_size)
 }

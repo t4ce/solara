@@ -8,6 +8,7 @@ pub(super) struct ResolvedStyle {
     pub color: Option<[f32; 4]>,
     pub background_color: Option<[f32; 4]>,
     pub font_size: Option<f32>,
+    pub line_height: Option<f32>,
     pub border_width: Option<f32>,
     pub border_color: Option<[f32; 4]>,
 }
@@ -32,9 +33,12 @@ fn from_computed(style: &ComputedStyle) -> ResolvedStyle {
                     .and_then(css_color_to_rgba)
             })
             .flatten(),
-        font_size: authored(style, &["font", "font-size"])
-            .then_some(style.font_size_px)
-            .flatten(),
+        // Computed font metrics include inherited values and renderer-neutral
+        // HTML defaults (for example h1 versus body text). Unlike colors and
+        // backgrounds, these values define layout geometry even when they were
+        // not directly authored on this node.
+        font_size: style.font_size_px,
+        line_height: style.line_height_px,
         border_width: authored(
             style,
             &[
@@ -78,14 +82,14 @@ mod tests {
     use super::from_computed;
 
     #[test]
-    fn ignores_user_agent_defaults_but_consumes_author_css() {
+    fn consumes_computed_typography_but_only_authored_paint_colors() {
         let defaults = from_computed(&ComputedStyle {
             color: Some("#1f1f1f".into()),
             font_size_px: Some(30.0),
             ..ComputedStyle::default()
         });
         assert_eq!(defaults.color, None);
-        assert_eq!(defaults.font_size, None);
+        assert_eq!(defaults.font_size, Some(30.0));
 
         let mut engine = DomEngine::new().expect("engine starts");
         let artifact = engine
@@ -105,5 +109,6 @@ mod tests {
         let resolved = from_computed(computed);
         assert!(resolved.color.is_some());
         assert_eq!(resolved.font_size, Some(21.0));
+        assert!(resolved.line_height.is_some());
     }
 }

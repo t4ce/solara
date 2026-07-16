@@ -15,7 +15,7 @@ use wgpu_text::{
     BrushBuilder, TextBrush,
     glyph_brush::{
         Section, Text,
-        ab_glyph::{Font, FontArc},
+        ab_glyph::{Font, FontArc, ScaleFont},
     },
 };
 use winit::event_loop::OwnedDisplayHandle;
@@ -792,6 +792,27 @@ impl Renderer {
 
 static FONT: OnceLock<FontArc> = OnceLock::new();
 
+/// Metrics for the bundled font at one CSS `font-size`.
+///
+/// CSS sizes are pixels per em. `wgpu_text` uses `ab_glyph`'s pixel-height
+/// scale, so [`glyph_scale`](Self::glyph_scale) is deliberately distinct from
+/// [`font_size`](Self::font_size).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontMetrics {
+    pub font_size: f32,
+    pub glyph_scale: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+    pub advance_width: f32,
+}
+
+impl FontMetrics {
+    pub fn natural_line_height(self) -> f32 {
+        self.ascent + self.descent + self.line_gap
+    }
+}
+
 fn font() -> &'static FontArc {
     FONT.get_or_init(|| {
         FontArc::try_from_slice(include_bytes!("../fonts/Inconsolata-Regular.ttf"))
@@ -799,10 +820,28 @@ fn font() -> &'static FontArc {
     })
 }
 
-pub fn char_width(scale: f32) -> f32 {
+pub fn font_metrics(font_size: f32) -> FontMetrics {
     let font = font();
+    let font_size = if font_size.is_finite() {
+        font_size.max(0.0)
+    } else {
+        0.0
+    };
     let em = font.units_per_em().unwrap_or(1000.0);
-    font.h_advance_unscaled(font.glyph_id('n')) * scale / em
+    let glyph_scale = font_size * font.height_unscaled() / em;
+    let scaled = font.as_scaled(glyph_scale);
+    FontMetrics {
+        font_size,
+        glyph_scale,
+        ascent: scaled.ascent(),
+        descent: -scaled.descent(),
+        line_gap: scaled.line_gap(),
+        advance_width: scaled.h_advance(scaled.glyph_id('n')),
+    }
+}
+
+pub fn char_width(font_size: f32) -> f32 {
+    font_metrics(font_size).advance_width
 }
 
 #[cfg(not(feature = "text-only"))]
@@ -821,16 +860,24 @@ fn cast_slice<T: Copy>(values: &[T]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::char_width;
+    use super::{char_width, font_metrics};
 
     #[cfg(not(feature = "text-only"))]
     use super::GpuShape;
 
     #[test]
     fn bundled_font_exposes_stable_positive_metrics() {
-        let width = char_width(14.0);
-        assert!(width.is_finite());
-        assert!(width > 0.0);
+        let small = font_metrics(14.0);
+        let large = font_metrics(28.0);
+
+        assert!(small.advance_width.is_finite());
+        assert!(small.advance_width > 0.0);
+        assert!(small.ascent > 0.0);
+        assert!(small.descent >= 0.0);
+        assert!(small.natural_line_height() > 0.0);
+        assert!((large.glyph_scale - small.glyph_scale * 2.0).abs() < 0.001);
+        assert!((char_width(28.0) - char_width(14.0) * 2.0).abs() < 0.001);
+        assert_ne!(small.font_size, small.glyph_scale);
     }
 
     #[cfg(not(feature = "text-only"))]

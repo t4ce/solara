@@ -66,6 +66,12 @@ current swapchain path reuses an acquire fence without resetting it. Set
 
 The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its Lightning CSS stage before Solara builds layout nodes. A render-digest regression test locks the no-author-CSS handoff to the approved visual output. See [the engine handoff notes](docs/engine-handoff.md) for the boundary and update workflow.
 
+The static scene supports mixed CSS font sizes end to end. Computed `font-size`
+and `line-height` values—including inherited sizes, heading defaults, relative
+`em`/`rem`/percentage values, and absolute CSS units—drive both layout and each
+glyph run. This is an upfront, single-scene calculation; it does not add font
+animation or a retained animation pass.
+
 ## Project Structure
 
 ```text

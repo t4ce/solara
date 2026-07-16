@@ -2,7 +2,7 @@ import { BLOCK_TAGS } from './htmlDefaults.mjs';
 
 // Renderer-neutral user-agent defaults. Solara remains responsible for turning
 // these computed values into pixels; this module never emits paint operations.
-const FONT_PX = 14;
+export const DEFAULT_FONT_PX = 14;
 const FONT_COLOR = '#1f1f1f';
 
 const TAG_STYLE_DEFAULTS = Object.freeze({
@@ -27,6 +27,8 @@ export const INHERITED_STYLE_FIELDS = Object.freeze([
   'color',
   'fontSizePx',
   'lineHeightPx',
+  'lineHeightMode',
+  'lineHeightFactor',
   'fontWeight',
   'fontStyle',
   'textAlign',
@@ -50,8 +52,10 @@ export function createComputedStyle(tagName = '', path = '', parentStyle = null)
     display: defaultDisplayForTag(tag),
     color: FONT_COLOR,
     backgroundColor: 'transparent',
-    fontSizePx: FONT_PX,
+    fontSizePx: DEFAULT_FONT_PX,
     lineHeightPx: 18,
+    lineHeightMode: 'normal',
+    lineHeightFactor: null,
     fontWeight: 'normal',
     fontStyle: 'normal',
     textAlign: 'left',

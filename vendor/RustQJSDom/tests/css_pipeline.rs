@@ -81,6 +81,49 @@ fn browser_owned_loader_feeds_external_css_into_the_same_style_index() {
 }
 
 #[test]
+fn computes_native_absolute_and_relative_font_sizes_before_the_handoff() {
+    let mut engine = DomEngine::new().expect("engine starts");
+    let artifact = engine
+        .parse(
+            r#"
+                <style>
+                  html { font-size: 20px; }
+                  #parent { font-size: 150%; line-height: 1.5; }
+                  #em { font-size: .5em; }
+                  #rem { font-size: 2rem; }
+                  #points { font-size: 12pt; }
+                  #shorthand { font: 24px/2 sans-serif; }
+                </style>
+                <html id="root"><main id="parent">
+                  <span id="em">em</span>
+                  <span id="rem">rem</span>
+                  <span id="points">points</span>
+                  <span id="shorthand">shorthand</span>
+                </main></html>
+            "#,
+            "https://example.test/typography",
+        )
+        .expect("styled document parses");
+
+    let html_style = style_for_id(&artifact, "root");
+    let parent = style_for_id(&artifact, "parent");
+    let em = style_for_id(&artifact, "em");
+    let rem = style_for_id(&artifact, "rem");
+    let points = style_for_id(&artifact, "points");
+    let shorthand = style_for_id(&artifact, "shorthand");
+
+    assert_eq!(html_style.font_size_px, Some(20.0));
+    assert_eq!(parent.font_size_px, Some(30.0));
+    assert_eq!(parent.line_height_px, Some(45.0));
+    assert_eq!(em.font_size_px, Some(15.0));
+    assert_eq!(em.line_height_px, Some(22.5));
+    assert_eq!(rem.font_size_px, Some(40.0));
+    assert!((points.font_size_px.expect("point size") - 16.0).abs() < 0.001);
+    assert_eq!(shorthand.font_size_px, Some(24.0));
+    assert_eq!(shorthand.line_height_px, Some(48.0));
+}
+
+#[test]
 fn missing_external_css_is_reported_without_losing_the_dom() {
     let mut engine = DomEngine::new().expect("engine starts");
     let artifact = engine

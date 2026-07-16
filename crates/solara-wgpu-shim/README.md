@@ -11,6 +11,7 @@ rendering.
 | `GpuPainter` | Shape pipeline, screen uniform, and glyph brush |
 | `Renderer` | Convenience composition used by Solara's event loop |
 | `Shape` / `TextRun` | Renderer-neutral records accepted from Solara |
+| `FontMetrics` / `font_metrics` | CSS-em to glyph-scale conversion plus bundled-font metrics |
 | `wgpu` / `wgpu_text` | Complete upstream re-exports for escape-hatch use |
 
 The decomposed API supports rendering into an acquired window frame or any

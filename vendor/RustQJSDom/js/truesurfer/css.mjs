@@ -1,5 +1,5 @@
 import * as lightningcss from '../lightningcss.mjs';
-import { createComputedStyle } from './cssDefaults.mjs';
+import { createComputedStyle, DEFAULT_FONT_PX } from './cssDefaults.mjs';
 import { SUPPORTED_STYLE_TAGS } from './htmlDefaults.mjs';
 
 const COMPACT_STYLE_FIELDS = [
@@ -320,20 +320,125 @@ function expandBoxValues(value) {
 function parsePx(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === '0') return 0;
-  const match = raw.match(/^(-?\d+(?:\.\d+)?)px$/);
+  const match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))px$/);
   if (!match) return null;
   return Number(match[1]);
 }
 
-function parseLineHeightPx(value, fontSizePx) {
+function parseAbsoluteLengthPx(value) {
   const raw = String(value || '').trim().toLowerCase();
-  if (!raw || raw === 'normal') return null;
   const px = parsePx(raw);
   if (px != null) return px;
-  const match = raw.match(/^(-?\d+(?:\.\d+)?)$/);
+  const match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))(pt|pc|in|cm|mm|q)$/);
   if (!match) return null;
-  const fontPx = Math.max(1, Number(fontSizePx || 0));
-  return Number(match[1]) * fontPx;
+  const amount = Number(match[1]);
+  const factors = {
+    pt: 96 / 72,
+    pc: 16,
+    in: 96,
+    cm: 96 / 2.54,
+    mm: 96 / 25.4,
+    q: 96 / 101.6,
+  };
+  return amount * factors[match[2]];
+}
+
+function parseFontSizePx(value, parentFontSizePx, rootFontSizePx) {
+  const raw = String(value || '').trim().toLowerCase();
+  const parentPx = Math.max(0, Number(parentFontSizePx ?? DEFAULT_FONT_PX));
+  const rootPx = Math.max(0, Number(rootFontSizePx ?? DEFAULT_FONT_PX));
+  if (!raw) return null;
+  if (raw === 'inherit' || raw === 'unset') return parentPx;
+  if (raw === 'initial' || raw === 'revert' || raw === 'medium') return DEFAULT_FONT_PX;
+
+  const keywords = {
+    'xx-small': 0.6,
+    'x-small': 0.75,
+    small: 0.89,
+    large: 1.2,
+    'x-large': 1.5,
+    'xx-large': 2,
+    'xxx-large': 3,
+  };
+  if (keywords[raw] != null) return DEFAULT_FONT_PX * keywords[raw];
+  if (raw === 'smaller') return parentPx / 1.2;
+  if (raw === 'larger') return parentPx * 1.2;
+
+  const absolute = parseAbsoluteLengthPx(raw);
+  if (absolute != null) return Math.max(0, absolute);
+  let match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))em$/);
+  if (match) return Math.max(0, Number(match[1]) * parentPx);
+  match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))rem$/);
+  if (match) return Math.max(0, Number(match[1]) * rootPx);
+  match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
+  if (match) return Math.max(0, Number(match[1]) * parentPx / 100);
+  return null;
+}
+
+function normalLineHeightPx(fontSizePx) {
+  return Math.max(0, Number(fontSizePx || 0) * (18 / DEFAULT_FONT_PX));
+}
+
+function refreshRelativeLineHeight(style) {
+  if (!style) return;
+  if (style.lineHeightMode === 'number') {
+    style.lineHeightPx = Math.max(0, Number(style.fontSizePx || 0) * Number(style.lineHeightFactor || 0));
+  } else if (style.lineHeightMode === 'normal') {
+    style.lineHeightPx = normalLineHeightPx(style.fontSizePx);
+  }
+}
+
+function applyFontSize(style, value, context) {
+  const parsed = parseFontSizePx(
+    value,
+    context && context.parentFontSizePx,
+    context && context.rootFontSizePx,
+  );
+  if (parsed == null) return false;
+  style.fontSizePx = parsed;
+  refreshRelativeLineHeight(style);
+  return true;
+}
+
+function parseLineHeight(value, fontSizePx, rootFontSizePx) {
+  const raw = String(value || '').trim().toLowerCase();
+  const fontPx = Math.max(0, Number(fontSizePx || 0));
+  if (!raw) return null;
+  if (raw === 'normal' || raw === 'initial' || raw === 'revert') {
+    return { px: normalLineHeightPx(fontPx), mode: 'normal', factor: null };
+  }
+  const absolute = parseAbsoluteLengthPx(raw);
+  if (absolute != null) return { px: Math.max(0, absolute), mode: 'length', factor: null };
+  let match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))$/);
+  if (match) {
+    const factor = Math.max(0, Number(match[1]));
+    return { px: factor * fontPx, mode: 'number', factor };
+  }
+  match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/);
+  if (match) return { px: Math.max(0, Number(match[1]) * fontPx / 100), mode: 'length', factor: null };
+  match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))em$/);
+  if (match) return { px: Math.max(0, Number(match[1]) * fontPx), mode: 'length', factor: null };
+  match = raw.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))rem$/);
+  if (match) return { px: Math.max(0, Number(match[1]) * Number(rootFontSizePx || DEFAULT_FONT_PX)), mode: 'length', factor: null };
+  return null;
+}
+
+function applyLineHeight(style, value, context) {
+  const parsed = parseLineHeight(value, style && style.fontSizePx, context && context.rootFontSizePx);
+  if (!parsed) return false;
+  style.lineHeightPx = parsed.px;
+  style.lineHeightMode = parsed.mode;
+  style.lineHeightFactor = parsed.factor;
+  return true;
+}
+
+function applyFontShorthand(style, value, context) {
+  const raw = collapseWhitespace(value).toLowerCase();
+  const sizeToken = '(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|smaller|larger|0|-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:px|pt|pc|in|cm|mm|q|em|rem|%))';
+  const match = new RegExp(`(?:^|\\s)(${sizeToken})(?:\\s*\\/\\s*([^\\s]+))?(?=\\s|$)`).exec(raw);
+  if (!match || !applyFontSize(style, match[1], context)) return false;
+  if (match[2]) applyLineHeight(style, match[2], context);
+  return true;
 }
 
 function rgbByteToHex(v) {
@@ -367,7 +472,7 @@ function applyNormalizedField(style, field, value) {
   return true;
 }
 
-function applyDeclaration(style, name, value) {
+function applyDeclaration(style, name, value, context = null) {
   const prop = String(name || '').toLowerCase();
   const raw = String(value || '').trim();
   if (!prop || !raw) return false;
@@ -375,8 +480,9 @@ function applyDeclaration(style, name, value) {
   if (prop === 'color') return applyNormalizedField(style, 'color', normalizeColor(raw));
   if (prop === 'background-color') return applyNormalizedField(style, 'backgroundColor', normalizeColor(raw));
   if (prop === 'background') return applyNormalizedField(style, 'backgroundColor', normalizeColor(raw));
-  if (prop === 'font-size') return applyNormalizedField(style, 'fontSizePx', parsePx(raw));
-  if (prop === 'line-height') return applyNormalizedField(style, 'lineHeightPx', parseLineHeightPx(raw, style && style.fontSizePx));
+  if (prop === 'font') return applyFontShorthand(style, raw, context);
+  if (prop === 'font-size') return applyFontSize(style, raw, context);
+  if (prop === 'line-height') return applyLineHeight(style, raw, context);
   if (prop === 'font-weight') return applyNormalizedField(style, 'fontWeight', raw.toLowerCase());
   if (prop === 'font-style') return applyNormalizedField(style, 'fontStyle', raw.toLowerCase());
   if (prop === 'text-align') return applyNormalizedField(style, 'textAlign', raw.toLowerCase());
@@ -833,6 +939,19 @@ export function resolveNodeStyle(node, path, cssSection, ancestors, parentStyle 
     ? ancestors.map((entry) => buildElementDescriptor(entry && entry.node, entry && entry.path)).filter((entry) => !!entry.tag)
     : [];
   const style = createComputedStyle(element.tag, path, parentStyle);
+  const rootAncestor = Array.isArray(ancestors) && ancestors.length > 0
+    ? ancestors[0] && ancestors[0].node && ancestors[0].node.__trueosComputedStyle
+    : null;
+  const fontContext = {
+    parentFontSizePx: parentStyle && parentStyle.fontSizePx != null
+      ? parentStyle.fontSizePx
+      : DEFAULT_FONT_PX,
+    rootFontSizePx: element.tag === 'html'
+      ? DEFAULT_FONT_PX
+      : rootAncestor && rootAncestor.fontSizePx != null
+        ? rootAncestor.fontSizePx
+        : DEFAULT_FONT_PX,
+  };
   applyLegacyHtmlDefaults(style, node, ancestors);
   const winners = Object.create(null);
   const matchedRules = [];
@@ -865,11 +984,18 @@ export function resolveNodeStyle(node, path, cssSection, ancestors, parentStyle 
     }
   }
 
-  const winnerKeys = Object.keys(winners);
+  const winnerKeys = Object.keys(winners).sort((left, right) => {
+    const priority = (name) => {
+      if (name === 'font' || name === 'font-size') return 0;
+      if (name === 'line-height') return 2;
+      return 1;
+    };
+    return priority(left) - priority(right);
+  });
   const authoredProperties = [];
   for (let i = 0; i < winnerKeys.length; i++) {
     const key = winnerKeys[i];
-    if (applyDeclaration(style, key, winners[key].value)) {
+    if (applyDeclaration(style, key, winners[key].value, fontContext)) {
       authoredProperties.push(key);
     }
   }
@@ -886,16 +1012,33 @@ export function resolveNodeStyle(node, path, cssSection, ancestors, parentStyle 
 export function resolveInlineStyle(tagName, path, styleText, parentStyle = null) {
   const style = createComputedStyle(tagName, path, parentStyle);
   const parsed = parseInlineStyleToKernelObject(styleText);
-  let explicitLineHeight = false;
+  const fontContext = {
+    parentFontSizePx: parentStyle && parentStyle.fontSizePx != null
+      ? parentStyle.fontSizePx
+      : DEFAULT_FONT_PX,
+    rootFontSizePx: parentStyle && parentStyle.fontSizePx != null
+      ? parentStyle.fontSizePx
+      : DEFAULT_FONT_PX,
+  };
   const authoredProperties = [];
   if (parsed && Array.isArray(parsed.declarations)) {
-    const declarations = normalizeDeclarationList(parsed.declarations);
+    const declarations = normalizeDeclarationList(parsed.declarations).sort((left, right) => {
+      const priority = (declaration) => {
+        const name = String(declaration && declaration.name || '').toLowerCase();
+        if (name === 'font' || name === 'font-size') return 0;
+        if (name === 'line-height') return 2;
+        return 1;
+      };
+      return priority(left) - priority(right);
+    });
     for (let i = 0; i < declarations.length; i++) {
       const declaration = declarations[i];
-      if (String(declaration && declaration.name || '').toLowerCase() === 'line-height') {
-        explicitLineHeight = true;
-      }
-      if (applyDeclaration(style, declaration && declaration.name, declaration && declaration.value)) {
+      if (applyDeclaration(
+        style,
+        declaration && declaration.name,
+        declaration && declaration.value,
+        fontContext,
+      )) {
         authoredProperties.push(String(declaration && declaration.name || '').toLowerCase());
       }
     }
@@ -905,9 +1048,6 @@ export function resolveInlineStyle(tagName, path, styleText, parentStyle = null)
       matchedRules: [],
       inline: declarations.length > 0,
     };
-  }
-  if (!explicitLineHeight) {
-    style.lineHeightPx = Math.max(20, Math.round(Number(style.fontSizePx || 15)) + 4);
   }
   return style;
 }

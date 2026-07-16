@@ -444,12 +444,12 @@ impl ElementKind {
     }
 }
 
-pub fn inline_width(inlines: &[Inline]) -> f32 {
+pub fn inline_width(inlines: &[Inline], font_size: f32) -> f32 {
     inlines
         .iter()
         .map(|inline| match inline {
             Inline::Text(t) | Inline::Bold(t) | Inline::Italic(t) => {
-                t.chars().count() as f32 * crate::gpu_ui::text::char_width_default()
+                t.chars().count() as f32 * crate::gpu_ui::text::char_width(font_size)
             }
         })
         .sum()

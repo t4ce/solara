@@ -37,6 +37,6 @@ impl solara_wgpu_shim::TextRun for TextSection {
     }
 
     fn scale(&self) -> f32 {
-        self.scale
+        crate::gpu_ui::text::metrics(self.font_size).glyph_scale
     }
 }
