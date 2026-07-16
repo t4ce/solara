@@ -9,6 +9,7 @@ publish = false
 
 [features]
 default = []
+text-only = []
 visual-debug = []
 
 [dependencies]

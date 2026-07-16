@@ -88,7 +88,19 @@ The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its 
 `crates/solara-wgpu-shim` is the sole direct owner of WGPU and the glyph stack.
 It exposes the full upstream APIs plus Solara's shared GPU context, per-window
 surface, acquired frame, and painter composition. The root application depends
-only on this shim.
+only on this shim. The shim is always present; there is no separate no-WGPU
+build mode.
+
+Run the text-only renderer, which keeps the WGPU surface and glyph path but
+compiles out Solara's shape pipeline:
+
+```bash
+cargo run --features gpu-text-only
+```
+
+The shim publishes and tests the exact WGPU call inventory for this mode as
+`text_only::API_SUBSET`; each matching call is tagged `TEXT_ONLY_WGPU_API` in
+the source.
 
 Enable the optional visual GPU activity rail with:
 

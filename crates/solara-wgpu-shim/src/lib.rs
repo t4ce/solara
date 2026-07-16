@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 pub use wgpu;
 pub use wgpu_text;
 
+#[cfg(not(feature = "text-only"))]
 use wgpu::util::DeviceExt;
 use wgpu_text::{
     BrushBuilder, TextBrush,
@@ -20,9 +21,14 @@ use wgpu_text::{
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
+#[cfg(feature = "text-only")]
+pub mod text_only;
+
+#[cfg(not(feature = "text-only"))]
 const SHAPE_SHADER: &str = include_str!("shape.wgsl");
 
 /// Renderer-neutral shape record accepted by [`GpuPainter`].
+#[cfg(not(feature = "text-only"))]
 pub trait Shape {
     fn position_size(&self) -> [f32; 4];
     fn color(&self) -> [f32; 4];
@@ -40,6 +46,7 @@ pub trait TextRun {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[cfg(not(feature = "text-only"))]
 struct ScreenUniform {
     size: [f32; 2],
     _pad: [f32; 2],
@@ -47,6 +54,7 @@ struct ScreenUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg(not(feature = "text-only"))]
 struct GpuShape {
     pos_size: [f32; 4],
     color: [f32; 4],
@@ -54,7 +62,7 @@ struct GpuShape {
     _pad: u32,
 }
 
-#[cfg(feature = "visual-debug")]
+#[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VisualDebugEvent {
@@ -65,7 +73,7 @@ pub enum VisualDebugEvent {
     SubmitPresent,
 }
 
-#[cfg(feature = "visual-debug")]
+#[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
 impl VisualDebugEvent {
     const ALL: [Self; 5] = [
         Self::SurfaceConfigure,
@@ -91,13 +99,13 @@ impl VisualDebugEvent {
 }
 
 /// One-frame visual activity state for costly WGPU boundaries.
-#[cfg(feature = "visual-debug")]
+#[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
 #[derive(Default)]
 pub struct VisualDebug {
     active: u8,
 }
 
-#[cfg(feature = "visual-debug")]
+#[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
 impl VisualDebug {
     pub fn indicate(&mut self, event: VisualDebugEvent) {
         self.active |= event.bit();
@@ -160,6 +168,7 @@ impl GpuContext {
         window: Arc<Window>,
         display: OwnedDisplayHandle,
     ) -> (Arc<Self>, wgpu::Surface<'static>) {
+        // TEXT_ONLY_WGPU_API: wgpu::InstanceDescriptor::new_with_display_handle_from_env
         let mut descriptor =
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(display));
         // WGPU 30 reuses an unreset acquire fence on Linux Vulkan. Keep
@@ -169,10 +178,13 @@ impl GpuContext {
         if std::env::var_os("WGPU_VALIDATION").is_none() {
             descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION);
         }
+        // TEXT_ONLY_WGPU_API: wgpu::Instance::new
         let instance = wgpu::Instance::new(descriptor);
+        // TEXT_ONLY_WGPU_API: wgpu::Instance::create_surface
         let surface = instance
             .create_surface(window)
             .expect("failed to create surface");
+        // TEXT_ONLY_WGPU_API: wgpu::Instance::request_adapter
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -182,6 +194,7 @@ impl GpuContext {
             })
             .await
             .expect("failed to find adapter");
+        // TEXT_ONLY_WGPU_API: wgpu::Adapter::request_device
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("solara_gpu_device"),
@@ -204,6 +217,7 @@ impl GpuContext {
     }
 
     pub fn create_surface(&self, window: Arc<Window>) -> wgpu::Surface<'static> {
+        // TEXT_ONLY_WGPU_API: wgpu::Instance::create_surface
         self.instance
             .create_surface(window)
             .expect("failed to create surface")
@@ -239,6 +253,7 @@ impl WindowSurface {
         width: u32,
         height: u32,
     ) -> Self {
+        // TEXT_ONLY_WGPU_API: wgpu::Surface::get_capabilities
         let caps = surface.get_capabilities(context.adapter());
         let format = caps
             .formats
@@ -257,6 +272,7 @@ impl WindowSurface {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+        // TEXT_ONLY_WGPU_API: wgpu::Surface::configure
         surface.configure(context.device(), &config);
         Self { surface, config }
     }
@@ -279,10 +295,12 @@ impl WindowSurface {
         }
         self.config.width = width;
         self.config.height = height;
+        // TEXT_ONLY_WGPU_API: wgpu::Surface::configure
         self.surface.configure(context.device(), &self.config);
     }
 
     pub fn acquire(&self) -> Result<Option<SurfaceFrame>, RenderError> {
+        // TEXT_ONLY_WGPU_API: wgpu::Surface::get_current_texture
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(output)
             | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
@@ -293,6 +311,7 @@ impl WindowSurface {
             wgpu::CurrentSurfaceTexture::Lost => return Err(RenderError::Lost),
             wgpu::CurrentSurfaceTexture::Validation => return Err(RenderError::Validation),
         };
+        // TEXT_ONLY_WGPU_API: wgpu::Texture::create_view
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -316,25 +335,32 @@ impl SurfaceFrame {
     }
 
     pub fn present(self, queue: &wgpu::Queue) {
+        // TEXT_ONLY_WGPU_API: wgpu::Queue::present
         queue.present(self.output);
     }
 }
 
 /// Encodes Solara shapes and glyphs into any compatible texture view.
 pub struct GpuPainter {
+    #[cfg(not(feature = "text-only"))]
     screen_buffer: wgpu::Buffer,
+    #[cfg(not(feature = "text-only"))]
     shape_pipeline: wgpu::RenderPipeline,
+    #[cfg(not(feature = "text-only"))]
     shape_bind_group: wgpu::BindGroup,
     text_brush: TextBrush,
+    #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
     view_width: u32,
 }
 
 impl GpuPainter {
     pub fn new(context: &GpuContext, width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
+        #[cfg(not(feature = "text-only"))]
         let screen_uniform = ScreenUniform {
             size: [width as f32, height as f32],
             _pad: [0.0, 0.0],
         };
+        #[cfg(not(feature = "text-only"))]
         let screen_buffer =
             context
                 .device()
@@ -343,6 +369,7 @@ impl GpuPainter {
                     contents: as_bytes(&screen_uniform),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
+        #[cfg(not(feature = "text-only"))]
         let layout = context
             .device()
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -358,6 +385,7 @@ impl GpuPainter {
                     count: None,
                 }],
             });
+        #[cfg(not(feature = "text-only"))]
         let shape_bind_group = context
             .device()
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -368,12 +396,14 @@ impl GpuPainter {
                     resource: screen_buffer.as_entire_binding(),
                 }],
             });
+        #[cfg(not(feature = "text-only"))]
         let shader = context
             .device()
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("solara_shape_shader"),
                 source: wgpu::ShaderSource::Wgsl(SHAPE_SHADER.into()),
             });
+        #[cfg(not(feature = "text-only"))]
         let pipeline_layout =
             context
                 .device()
@@ -382,6 +412,7 @@ impl GpuPainter {
                     bind_group_layouts: &[Some(&layout)],
                     immediate_size: 0,
                 });
+        #[cfg(not(feature = "text-only"))]
         let shape_pipeline =
             context
                 .device()
@@ -417,61 +448,42 @@ impl GpuPainter {
                     multiview_mask: None,
                     cache: None,
                 });
+        // TEXT_ONLY_WGPU_API: wgpu_text::BrushBuilder::build
         let text_brush =
             BrushBuilder::using_font(font().clone()).build(context.device(), width, height, format);
         Self {
+            #[cfg(not(feature = "text-only"))]
             screen_buffer,
+            #[cfg(not(feature = "text-only"))]
             shape_pipeline,
+            #[cfg(not(feature = "text-only"))]
             shape_bind_group,
             text_brush,
+            #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
             view_width: width,
         }
     }
 
     pub fn resize(&mut self, context: &GpuContext, width: u32, height: u32) {
-        self.view_width = width;
+        #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
+        {
+            self.view_width = width;
+        }
+        #[cfg(not(feature = "text-only"))]
         let uniform = ScreenUniform {
             size: [width as f32, height as f32],
             _pad: [0.0, 0.0],
         };
+        #[cfg(not(feature = "text-only"))]
         context
             .queue()
             .write_buffer(&self.screen_buffer, 0, as_bytes(&uniform));
+        // TEXT_ONLY_WGPU_API: wgpu_text::TextBrush::resize_view
         self.text_brush
             .resize_view(width as f32, height as f32, context.queue());
     }
 
-    pub fn encode<S: Shape, T: TextRun>(
-        &mut self,
-        context: &GpuContext,
-        view: &wgpu::TextureView,
-        shapes: &[S],
-        text: &[T],
-    ) -> wgpu::CommandBuffer {
-        self.encode_inner(context, view, shapes, text, None)
-    }
-
-    #[cfg(feature = "visual-debug")]
-    pub fn encode_with_visual_debug<S: Shape, T: TextRun>(
-        &mut self,
-        context: &GpuContext,
-        view: &wgpu::TextureView,
-        shapes: &[S],
-        text: &[T],
-        visual_debug: &VisualDebug,
-    ) -> wgpu::CommandBuffer {
-        self.encode_inner(context, view, shapes, text, Some(visual_debug))
-    }
-
-    fn encode_inner<S: Shape, T: TextRun>(
-        &mut self,
-        context: &GpuContext,
-        view: &wgpu::TextureView,
-        shapes: &[S],
-        text: &[T],
-        #[cfg(feature = "visual-debug")] visual_debug: Option<&VisualDebug>,
-        #[cfg(not(feature = "visual-debug"))] _visual_debug: Option<&()>,
-    ) -> wgpu::CommandBuffer {
+    fn queue_text<T: TextRun>(&mut self, context: &GpuContext, text: &[T]) {
         let sections = text
             .iter()
             .map(|run| Section {
@@ -485,9 +497,46 @@ impl GpuPainter {
                 ..Section::default()
             })
             .collect::<Vec<_>>();
+        // TEXT_ONLY_WGPU_API: wgpu_text::TextBrush::queue
         self.text_brush
             .queue(context.device(), context.queue(), &sections)
             .expect("glyph queue failed");
+    }
+
+    #[cfg(not(feature = "text-only"))]
+    pub fn encode<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+    ) -> wgpu::CommandBuffer {
+        self.encode_inner(context, view, shapes, text, None)
+    }
+
+    #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
+    pub fn encode_with_visual_debug<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+        visual_debug: &VisualDebug,
+    ) -> wgpu::CommandBuffer {
+        self.encode_inner(context, view, shapes, text, Some(visual_debug))
+    }
+
+    #[cfg(not(feature = "text-only"))]
+    fn encode_inner<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+        #[cfg(feature = "visual-debug")] visual_debug: Option<&VisualDebug>,
+        #[cfg(not(feature = "visual-debug"))] _visual_debug: Option<&()>,
+    ) -> wgpu::CommandBuffer {
+        self.queue_text(context, text);
 
         let gpu_shapes = shapes
             .iter()
@@ -554,6 +603,52 @@ impl GpuPainter {
         }
         encoder.finish()
     }
+
+    /// Encode only text. With `text-only`, this is the shim's complete paint API.
+    #[cfg(feature = "text-only")]
+    pub fn encode_text<T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        text: &[T],
+    ) -> wgpu::CommandBuffer {
+        self.queue_text(context, text);
+        // TEXT_ONLY_WGPU_API: wgpu::Device::create_command_encoder
+        let mut encoder =
+            context
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some(text_only::TAG),
+                });
+        {
+            // TEXT_ONLY_WGPU_API: wgpu::CommandEncoder::begin_render_pass
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(text_only::TAG),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // TEXT_ONLY_WGPU_API: wgpu_text::TextBrush::draw
+            self.text_brush.draw(&mut pass);
+        }
+        // TEXT_ONLY_WGPU_API: wgpu::CommandEncoder::finish
+        encoder.finish()
+    }
 }
 
 /// Convenience composition used by Solara's window event loop.
@@ -561,7 +656,7 @@ pub struct Renderer {
     surface: WindowSurface,
     context: Arc<GpuContext>,
     painter: GpuPainter,
-    #[cfg(feature = "visual-debug")]
+    #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
     visual_debug: VisualDebug,
 }
 
@@ -599,7 +694,7 @@ impl Renderer {
             surface,
             context,
             painter,
-            #[cfg(feature = "visual-debug")]
+            #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
             visual_debug: {
                 let mut debug = VisualDebug::default();
                 debug.indicate(VisualDebugEvent::SurfaceConfigure);
@@ -634,16 +729,17 @@ impl Renderer {
         }
         self.surface.resize(&self.context, width, height);
         self.painter.resize(&self.context, width, height);
-        #[cfg(feature = "visual-debug")]
+        #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
         self.visual_debug
             .indicate(VisualDebugEvent::SurfaceConfigure);
     }
 
-    #[cfg(feature = "visual-debug")]
+    #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
     pub fn indicate_visual_debug(&mut self, event: VisualDebugEvent) {
         self.visual_debug.indicate(event);
     }
 
+    #[cfg(not(feature = "text-only"))]
     pub fn render<S: Shape, T: TextRun>(
         &mut self,
         shapes: &[S],
@@ -679,6 +775,19 @@ impl Renderer {
         self.visual_debug.clear();
         Ok(())
     }
+
+    /// Acquire, draw only the supplied text runs, submit, and present.
+    #[cfg(feature = "text-only")]
+    pub fn render_text<T: TextRun>(&mut self, text: &[T]) -> Result<(), RenderError> {
+        let Some(frame) = self.surface.acquire()? else {
+            return Ok(());
+        };
+        let commands = self.painter.encode_text(&self.context, frame.view(), text);
+        // TEXT_ONLY_WGPU_API: wgpu::Queue::submit
+        self.context.queue().submit([commands]);
+        frame.present(self.context.queue());
+        Ok(())
+    }
 }
 
 static FONT: OnceLock<FontArc> = OnceLock::new();
@@ -696,12 +805,14 @@ pub fn char_width(scale: f32) -> f32 {
     font.h_advance_unscaled(font.glyph_id('n')) * scale / em
 }
 
+#[cfg(not(feature = "text-only"))]
 fn as_bytes<T: Copy>(value: &T) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
     }
 }
 
+#[cfg(not(feature = "text-only"))]
 fn cast_slice<T: Copy>(values: &[T]) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
@@ -710,7 +821,10 @@ fn cast_slice<T: Copy>(values: &[T]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuShape, char_width};
+    use super::char_width;
+
+    #[cfg(not(feature = "text-only"))]
+    use super::GpuShape;
 
     #[test]
     fn bundled_font_exposes_stable_positive_metrics() {
@@ -719,12 +833,13 @@ mod tests {
         assert!(width > 0.0);
     }
 
+    #[cfg(not(feature = "text-only"))]
     #[test]
     fn internal_shape_layout_matches_the_wgsl_instance_contract() {
         assert_eq!(std::mem::size_of::<GpuShape>(), 40);
     }
 
-    #[cfg(feature = "visual-debug")]
+    #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
     #[test]
     fn visual_debug_rail_distinguishes_active_events() {
         use super::{VisualDebug, VisualDebugEvent};

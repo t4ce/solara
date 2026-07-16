@@ -1,8 +1,10 @@
 pub use solara_wgpu_shim::{RenderError, Renderer, RendererContext};
 
+#[cfg(not(feature = "gpu-text-only"))]
 use crate::gpu_ui::shapes::ShapeInstance;
 use crate::gpu_ui::text::TextSection;
 
+#[cfg(not(feature = "gpu-text-only"))]
 impl solara_wgpu_shim::Shape for ShapeInstance {
     fn position_size(&self) -> [f32; 4] {
         self.pos_size

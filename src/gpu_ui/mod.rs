@@ -5,7 +5,6 @@ mod async_utils;
 mod geometry;
 mod html;
 mod loader;
-#[cfg(feature = "gpu")]
 mod renderer;
 mod shapes;
 mod text;

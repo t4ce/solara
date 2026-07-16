@@ -142,10 +142,13 @@ impl PageWindow {
 
     fn render(&mut self) {
         self.rebuild();
-        match self
+        #[cfg(feature = "gpu-text-only")]
+        let result = self.renderer.render_text(&self.batch.text.sections);
+        #[cfg(not(feature = "gpu-text-only"))]
+        let result = self
             .renderer
-            .render(&self.batch.shapes, &self.batch.text.sections)
-        {
+            .render(&self.batch.shapes, &self.batch.text.sections);
+        match result {
             Ok(()) => {}
             Err(RenderError::Lost | RenderError::Outdated) => {
                 let size = self.window.inner_size();

@@ -24,7 +24,6 @@ impl TextBatch {
     }
 }
 
-#[cfg(feature = "gpu")]
 pub fn char_width(scale: f32) -> f32 {
     solara_wgpu_shim::char_width(scale)
 }
