@@ -1,7 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
+#[cfg(feature = "gpu")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "gpu")]
 use wgpu_text::glyph_brush::ab_glyph::{Font, FontArc};
 
 pub const FONT_SCALE: f32 = 14.0;
@@ -28,8 +30,10 @@ impl TextBatch {
     }
 }
 
+#[cfg(feature = "gpu")]
 static FONT: OnceLock<FontArc> = OnceLock::new();
 
+#[cfg(feature = "gpu")]
 pub fn font() -> &'static FontArc {
     FONT.get_or_init(|| {
         FontArc::try_from_slice(include_bytes!("fonts/Inconsolata-Regular.ttf"))
@@ -37,6 +41,7 @@ pub fn font() -> &'static FontArc {
     })
 }
 
+#[cfg(feature = "gpu")]
 pub fn char_width(scale: f32) -> f32 {
     let font = font();
     let em = font.units_per_em().unwrap_or(1000.0);

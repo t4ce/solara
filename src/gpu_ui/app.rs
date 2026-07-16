@@ -107,7 +107,11 @@ impl PageWindow {
                 .create_window(window_attributes)
                 .expect("failed to create window"),
         );
-        let renderer = block_on(Renderer::new(window.clone(), renderer_context));
+        let renderer = block_on(Renderer::new(
+            window.clone(),
+            event_loop.owned_display_handle(),
+            renderer_context,
+        ));
         let scale_factor = window.scale_factor() as f32;
         let (width, viewport_height) = logical_size(&window);
         page.document.relayout(width);

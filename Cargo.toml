@@ -26,11 +26,15 @@ include = [
     "docs/engine-handoff.md",
 ]
 
+[features]
+default = ["gpu"]
+gpu = ["dep:wgpu", "dep:wgpu_text"]
+
 [dependencies]
 env_logger = "0.11.11"
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 ureq = "3.3.0"
 url = "2"
-wgpu = "30.0.0"
-wgpu_text = "30.0.0"
+wgpu = { version = "30.0.0", optional = true }
+wgpu_text = { version = "30.0.0", optional = true }
 winit = "0.30"

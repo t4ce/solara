@@ -5,6 +5,7 @@ use wgpu_text::{
     BrushBuilder, TextBrush,
     glyph_brush::{Section, Text},
 };
+use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
 use crate::gpu_ui::shapes::{ScreenUniform, ShapeInstance, as_bytes, cast_slice};
@@ -39,7 +40,11 @@ pub enum RenderError {
 }
 
 impl Renderer {
-    pub async fn new(window: Arc<Window>, shared: Option<Arc<RendererContext>>) -> Self {
+    pub async fn new(
+        window: Arc<Window>,
+        display: OwnedDisplayHandle,
+        shared: Option<Arc<RendererContext>>,
+    ) -> Self {
         let size = window.inner_size();
         let (surface, context) = match shared {
             Some(context) => {
@@ -50,9 +55,8 @@ impl Renderer {
                 (surface, context)
             }
             None => {
-                let mut instance_descriptor =
-                    wgpu::InstanceDescriptor::new_without_display_handle();
-                instance_descriptor.backends = wgpu::Backends::all();
+                let instance_descriptor =
+                    wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(display));
                 let instance = wgpu::Instance::new(instance_descriptor);
                 let surface = instance
                     .create_surface(window.clone())
