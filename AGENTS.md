@@ -15,7 +15,7 @@ Reference material and demo inputs live in `docs/`, notably `demoui.html`, `demo
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings`: catch common Rust mistakes and reject warnings.
 
-Rust 1.96.1 or newer is required.
+Use the current Rust nightly toolchain.
 
 ## Coding Style & Naming Conventions
 

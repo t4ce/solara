@@ -19,7 +19,7 @@ Solara is not a replacement for Chrome, Firefox, or Safari. In its early stages,
 
 ## Requirements
 
-- Rust 1.96.1 or later
+- Rust nightly
 - Cargo
 - A C compiler for the vendored QuickJS runtime
 
