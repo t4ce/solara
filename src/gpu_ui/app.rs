@@ -15,7 +15,7 @@ use crate::gpu_ui::renderer::{Renderer, RendererContext};
 
 const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 720;
-const SECOND_DEMO_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/demoui.html");
+const PREVIEW_HTML_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/preview.html");
 
 pub fn run(source: Option<String>) -> Result<(), String> {
     let initial_pages = load_initial_pages(source.as_deref())?;
@@ -42,7 +42,7 @@ struct InitialPage {
 fn load_initial_pages(primary_source: Option<&str>) -> Result<Vec<InitialPage>, String> {
     Ok(vec![
         load_initial_page(primary_source, "bundled demo")?,
-        load_initial_page(Some(SECOND_DEMO_PATH), "extended demo")?,
+        load_initial_page(Some(PREVIEW_HTML_PATH), "preview")?,
     ])
 }
 
@@ -242,16 +242,16 @@ impl ApplicationHandler for GpuUiApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{SECOND_DEMO_PATH, load_initial_pages};
+    use super::{PREVIEW_HTML_PATH, load_initial_pages};
 
     #[test]
     fn default_demo_session_preloads_two_independent_documents() {
         let pages = load_initial_pages(None).expect("both demo pages load");
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[0].label, "bundled demo");
-        assert_eq!(pages[1].label, "extended demo");
+        assert_eq!(pages[1].label, "preview");
         assert_ne!(pages[0].url, pages[1].url);
-        assert!(pages[1].url.path().ends_with("/demoui.html"));
-        assert!(std::path::Path::new(SECOND_DEMO_PATH).is_file());
+        assert!(pages[1].url.path().ends_with("/preview.html"));
+        assert!(std::path::Path::new(PREVIEW_HTML_PATH).is_file());
     }
 }

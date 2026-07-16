@@ -42,7 +42,7 @@ cargo build --locked
 ```
 
 Run the two-window demo. It opens the bundled `docs/demoui.html` and the
-extended repository-root `demoui.html` as independent browser windows:
+repository-root `preview.html` as independent browser windows:
 
 ```bash
 cargo run
