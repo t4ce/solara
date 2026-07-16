@@ -60,6 +60,10 @@ cargo check --locked
 cargo test --locked
 ```
 
+On Linux, Solara leaves WGPU 30's Vulkan validation layer disabled because its
+current swapchain path reuses an acquire fence without resetting it. Set
+`WGPU_VALIDATION=1` when explicitly debugging the backend.
+
 The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its Lightning CSS stage before Solara builds layout nodes. A render-digest regression test locks the no-author-CSS handoff to the approved visual output. See [the engine handoff notes](docs/engine-handoff.md) for the boundary and update workflow.
 
 ## Project Structure

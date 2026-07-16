@@ -55,8 +55,18 @@ impl Renderer {
                 (surface, context)
             }
             None => {
-                let instance_descriptor =
+                let mut instance_descriptor =
                     wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(display));
+                // WGPU 30 reuses an unreset acquire fence on Linux Vulkan. Keep
+                // WGPU's API validation, but leave Vulkan's external layer off
+                // until upstream fixes that backend path. WGPU_VALIDATION=1 is
+                // still an explicit opt-in for backend diagnostics.
+                #[cfg(target_os = "linux")]
+                if std::env::var_os("WGPU_VALIDATION").is_none() {
+                    instance_descriptor
+                        .flags
+                        .remove(wgpu::InstanceFlags::VALIDATION);
+                }
                 let instance = wgpu::Instance::new(instance_descriptor);
                 let surface = instance
                     .create_surface(window.clone())
