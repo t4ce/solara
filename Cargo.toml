@@ -28,6 +28,7 @@ include = [
 [features]
 default = ["gpu"]
 gpu = ["dep:solara-wgpu-shim"]
+gpu-visual-debug = ["gpu", "solara-wgpu-shim/visual-debug"]
 
 [dependencies]
 env_logger = "0.11.11"

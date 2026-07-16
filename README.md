@@ -90,6 +90,16 @@ It exposes the full upstream APIs plus Solara's shared GPU context, per-window
 surface, acquired frame, and painter composition. The root application depends
 only on this shim.
 
+Enable the optional visual GPU activity rail with:
+
+```bash
+cargo run --features gpu-visual-debug
+```
+
+The five markers show surface configuration, frame acquisition, shape upload,
+glyph upload, and submit/present activity. The feature is disabled by default
+and adds no overlay state or drawing work to normal builds.
+
 ## Roadmap
 
 - Build the basic application entry point and command-line arguments.

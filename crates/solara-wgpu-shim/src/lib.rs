@@ -46,12 +46,105 @@ struct ScreenUniform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GpuShape {
     pos_size: [f32; 4],
     color: [f32; 4],
     shape_type: u32,
     _pad: u32,
+}
+
+#[cfg(feature = "visual-debug")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VisualDebugEvent {
+    SurfaceConfigure,
+    FrameAcquire,
+    ShapeUpload,
+    GlyphUpload,
+    SubmitPresent,
+}
+
+#[cfg(feature = "visual-debug")]
+impl VisualDebugEvent {
+    const ALL: [Self; 5] = [
+        Self::SurfaceConfigure,
+        Self::FrameAcquire,
+        Self::ShapeUpload,
+        Self::GlyphUpload,
+        Self::SubmitPresent,
+    ];
+
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    const fn color(self) -> [f32; 4] {
+        match self {
+            Self::SurfaceConfigure => [0.65, 0.38, 0.95, 0.95],
+            Self::FrameAcquire => [0.10, 0.78, 0.92, 0.95],
+            Self::ShapeUpload => [1.00, 0.63, 0.12, 0.95],
+            Self::GlyphUpload => [0.94, 0.28, 0.68, 0.95],
+            Self::SubmitPresent => [0.24, 0.82, 0.44, 0.95],
+        }
+    }
+}
+
+/// One-frame visual activity state for costly WGPU boundaries.
+#[cfg(feature = "visual-debug")]
+#[derive(Default)]
+pub struct VisualDebug {
+    active: u8,
+}
+
+#[cfg(feature = "visual-debug")]
+impl VisualDebug {
+    pub fn indicate(&mut self, event: VisualDebugEvent) {
+        self.active |= event.bit();
+    }
+
+    pub fn is_active(&self, event: VisualDebugEvent) -> bool {
+        self.active & event.bit() != 0
+    }
+
+    fn clear(&mut self) {
+        self.active = 0;
+    }
+
+    fn overlay(&self, width: u32) -> Vec<GpuShape> {
+        const PANEL_WIDTH: f32 = 116.0;
+        const PANEL_Y: f32 = 10.0;
+        const MARKER_WIDTH: f32 = 14.0;
+        const MARKER_GAP: f32 = 6.0;
+        let panel_x = (width as f32 - PANEL_WIDTH - 10.0).max(10.0);
+        let mut shapes = vec![GpuShape {
+            pos_size: [panel_x, PANEL_Y, PANEL_WIDTH, 26.0],
+            color: [0.04, 0.06, 0.09, 0.78],
+            shape_type: 0,
+            _pad: 0,
+        }];
+        for (index, event) in VisualDebugEvent::ALL.into_iter().enumerate() {
+            let active = self.is_active(event);
+            let height = if active { 14.0 } else { 4.0 };
+            let y = PANEL_Y + 18.0 - height * 0.5;
+            shapes.push(GpuShape {
+                pos_size: [
+                    panel_x + 9.0 + index as f32 * (MARKER_WIDTH + MARKER_GAP),
+                    y,
+                    MARKER_WIDTH,
+                    height,
+                ],
+                color: if active {
+                    event.color()
+                } else {
+                    [0.34, 0.38, 0.44, 0.72]
+                },
+                shape_type: 0,
+                _pad: 0,
+            });
+        }
+        shapes
+    }
 }
 
 /// Objects shared by every Solara window.
@@ -233,6 +326,7 @@ pub struct GpuPainter {
     shape_pipeline: wgpu::RenderPipeline,
     shape_bind_group: wgpu::BindGroup,
     text_brush: TextBrush,
+    view_width: u32,
 }
 
 impl GpuPainter {
@@ -330,10 +424,12 @@ impl GpuPainter {
             shape_pipeline,
             shape_bind_group,
             text_brush,
+            view_width: width,
         }
     }
 
     pub fn resize(&mut self, context: &GpuContext, width: u32, height: u32) {
+        self.view_width = width;
         let uniform = ScreenUniform {
             size: [width as f32, height as f32],
             _pad: [0.0, 0.0],
@@ -351,6 +447,30 @@ impl GpuPainter {
         view: &wgpu::TextureView,
         shapes: &[S],
         text: &[T],
+    ) -> wgpu::CommandBuffer {
+        self.encode_inner(context, view, shapes, text, None)
+    }
+
+    #[cfg(feature = "visual-debug")]
+    pub fn encode_with_visual_debug<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+        visual_debug: &VisualDebug,
+    ) -> wgpu::CommandBuffer {
+        self.encode_inner(context, view, shapes, text, Some(visual_debug))
+    }
+
+    fn encode_inner<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+        #[cfg(feature = "visual-debug")] visual_debug: Option<&VisualDebug>,
+        #[cfg(not(feature = "visual-debug"))] _visual_debug: Option<&()>,
     ) -> wgpu::CommandBuffer {
         let sections = text
             .iter()
@@ -378,6 +498,15 @@ impl GpuPainter {
                 _pad: 0,
             })
             .collect::<Vec<_>>();
+        #[cfg(feature = "visual-debug")]
+        let gpu_shapes = match visual_debug {
+            Some(visual_debug) => {
+                let mut gpu_shapes = gpu_shapes;
+                gpu_shapes.extend(visual_debug.overlay(self.view_width));
+                gpu_shapes
+            }
+            None => gpu_shapes,
+        };
         let instance_buffer = (!gpu_shapes.is_empty()).then(|| {
             context
                 .device()
@@ -432,6 +561,8 @@ pub struct Renderer {
     surface: WindowSurface,
     context: Arc<GpuContext>,
     painter: GpuPainter,
+    #[cfg(feature = "visual-debug")]
+    visual_debug: VisualDebug,
 }
 
 pub type RendererContext = GpuContext;
@@ -468,6 +599,12 @@ impl Renderer {
             surface,
             context,
             painter,
+            #[cfg(feature = "visual-debug")]
+            visual_debug: {
+                let mut debug = VisualDebug::default();
+                debug.indicate(VisualDebugEvent::SurfaceConfigure);
+                debug
+            },
         }
     }
 
@@ -497,6 +634,14 @@ impl Renderer {
         }
         self.surface.resize(&self.context, width, height);
         self.painter.resize(&self.context, width, height);
+        #[cfg(feature = "visual-debug")]
+        self.visual_debug
+            .indicate(VisualDebugEvent::SurfaceConfigure);
+    }
+
+    #[cfg(feature = "visual-debug")]
+    pub fn indicate_visual_debug(&mut self, event: VisualDebugEvent) {
+        self.visual_debug.indicate(event);
     }
 
     pub fn render<S: Shape, T: TextRun>(
@@ -507,11 +652,31 @@ impl Renderer {
         let Some(frame) = self.surface.acquire()? else {
             return Ok(());
         };
-        let commands = self
-            .painter
-            .encode(&self.context, frame.view(), shapes, text);
+        #[cfg(feature = "visual-debug")]
+        {
+            self.visual_debug.indicate(VisualDebugEvent::FrameAcquire);
+            if !shapes.is_empty() {
+                self.visual_debug.indicate(VisualDebugEvent::ShapeUpload);
+            }
+            if !text.is_empty() {
+                self.visual_debug.indicate(VisualDebugEvent::GlyphUpload);
+            }
+            self.visual_debug.indicate(VisualDebugEvent::SubmitPresent);
+        }
+        let commands = self.painter.encode_inner(
+            &self.context,
+            frame.view(),
+            shapes,
+            text,
+            #[cfg(feature = "visual-debug")]
+            Some(&self.visual_debug),
+            #[cfg(not(feature = "visual-debug"))]
+            None,
+        );
         self.context.queue().submit([commands]);
         frame.present(self.context.queue());
+        #[cfg(feature = "visual-debug")]
+        self.visual_debug.clear();
         Ok(())
     }
 }
@@ -557,5 +722,22 @@ mod tests {
     #[test]
     fn internal_shape_layout_matches_the_wgsl_instance_contract() {
         assert_eq!(std::mem::size_of::<GpuShape>(), 40);
+    }
+
+    #[cfg(feature = "visual-debug")]
+    #[test]
+    fn visual_debug_rail_distinguishes_active_events() {
+        use super::{VisualDebug, VisualDebugEvent};
+
+        let mut debug = VisualDebug::default();
+        debug.indicate(VisualDebugEvent::FrameAcquire);
+        debug.indicate(VisualDebugEvent::GlyphUpload);
+        let overlay = debug.overlay(960);
+
+        assert_eq!(overlay.len(), 6);
+        assert_eq!(overlay[1].pos_size[3], 4.0);
+        assert_eq!(overlay[2].pos_size[3], 14.0);
+        assert_eq!(overlay[4].pos_size[3], 14.0);
+        assert_eq!(overlay[5].pos_size[3], 4.0);
     }
 }

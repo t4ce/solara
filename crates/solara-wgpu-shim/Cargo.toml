@@ -7,6 +7,10 @@ readme = "README.md"
 license = "MIT"
 publish = false
 
+[features]
+default = []
+visual-debug = []
+
 [dependencies]
 wgpu = "30.0.0"
 wgpu_text = "30.0.0"
