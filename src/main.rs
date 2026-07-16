@@ -1,8 +1,5 @@
 // trueos-blueprint: features=["ui4-solara-text"]
-// Blueprint build-plan marker; the target-aware attribute below is the active #![no_std] policy.
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod gpu_ui;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 mod trueos_app;

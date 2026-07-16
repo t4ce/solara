@@ -39,6 +39,9 @@ ureq = "3.3.0"
 url = "2"
 winit = "0.30"
 
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 

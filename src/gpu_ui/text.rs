@@ -20,6 +20,24 @@ pub struct TextBatch {
     pub sections: Vec<TextSection>,
 }
 
+/// Backend-neutral metrics used by layout before either WGPU or UI4 consumes
+/// the resulting text records.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontMetrics {
+    pub font_size: f32,
+    pub glyph_scale: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+    pub advance_width: f32,
+}
+
+impl FontMetrics {
+    pub fn natural_line_height(self) -> f32 {
+        self.ascent + self.descent + self.line_gap
+    }
+}
+
 impl TextBatch {
     pub fn clear(&mut self) {
         self.sections.clear();
@@ -27,7 +45,7 @@ impl TextBatch {
 }
 
 pub fn char_width(font_size: f32) -> f32 {
-    solara_wgpu_shim::char_width(font_size)
+    metrics(font_size).advance_width
 }
 
 pub fn chars_per_line_sized(max_width: f32, font_size: f32) -> usize {
@@ -176,6 +194,37 @@ pub fn queue_wrapped_sized(
     }
 }
 
-pub fn metrics(font_size: f32) -> solara_wgpu_shim::FontMetrics {
-    solara_wgpu_shim::font_metrics(font_size)
+pub fn metrics(font_size: f32) -> FontMetrics {
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        let metrics = solara_wgpu_shim::font_metrics(font_size);
+        FontMetrics {
+            font_size: metrics.font_size,
+            glyph_scale: metrics.glyph_scale,
+            ascent: metrics.ascent,
+            descent: metrics.descent,
+            line_gap: metrics.line_gap,
+            advance_width: metrics.advance_width,
+        }
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        let font_size = if font_size.is_finite() {
+            font_size.max(0.0)
+        } else {
+            0.0
+        };
+        // Solara's bundled layout font is monospace. UI4 owns the actual
+        // outlines; these em-relative values keep DOM wrapping independent
+        // of the WGPU shim while preserving the CSS pixel coordinate space.
+        FontMetrics {
+            font_size,
+            glyph_scale: font_size,
+            ascent: font_size * 0.8,
+            descent: font_size * 0.2,
+            line_gap: 0.0,
+            advance_width: font_size * 0.5,
+        }
+    }
 }
