@@ -1,4 +1,4 @@
-use crate::gpu_ui::geometry::{BLOCK_GAP, CONTROL_H, PAGE_PAD, Rect, TEXT_LINE};
+use crate::gpu_ui::geometry::{BLOCK_GAP, CONTROL_H, PAGE_PAD, Rect, TEXT_LINE, iframe_viewport};
 use crate::gpu_ui::html::node::{
     ButtonType, ElementKind, HtmlNode, HtmlTag, InputType, inline_width,
 };
@@ -112,7 +112,11 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         }
         ElementKind::Svg { height, .. } => ctx.place_block(*height + 8.0),
         ElementKind::Canvas { height, .. } => ctx.place_block(*height + 8.0),
-        ElementKind::Iframe { children } => layout_children(ctx, children),
+        ElementKind::Iframe {
+            width,
+            height,
+            children,
+        } => layout_iframe(*width, *height, children, ctx),
         ElementKind::Image { height, .. } => ctx.place_block(*height + 8.0),
         ElementKind::Dialog { children, floating } => {
             if *floating {
@@ -180,7 +184,7 @@ fn layout_control_in_row(node: &mut HtmlNode, x: f32, y: f32, row_h: f32, conten
 }
 
 fn layout_floating_dialog(children: &mut [HtmlNode], ctx: &mut LayoutContext) -> Rect {
-    let w = 360.0;
+    let w = 360.0_f32.min(ctx.content_width());
     let x = (ctx.page_width - w) * 0.5;
     let y = ctx.cursor_y;
     let h = 180.0;
@@ -199,6 +203,26 @@ fn layout_floating_dialog(children: &mut [HtmlNode], ctx: &mut LayoutContext) ->
     rect
 }
 
+fn layout_iframe(
+    requested_width: f32,
+    requested_height: f32,
+    children: &mut [HtmlNode],
+    ctx: &mut LayoutContext,
+) -> Rect {
+    let width = requested_width.max(1.0).min(ctx.content_width());
+    let height = requested_height.max(1.0);
+    let mut frame = ctx.place_block(height);
+    frame.width = width;
+    let viewport = iframe_viewport(frame);
+
+    let mut child_ctx = LayoutContext::new(viewport.width + PAGE_PAD * 2.0);
+    for child in children.iter_mut() {
+        layout_node(child, &mut child_ctx);
+        shift_bounds_tree(child, viewport.x - PAGE_PAD, viewport.y - PAGE_PAD);
+    }
+    frame
+}
+
 fn shift_bounds_tree(node: &mut HtmlNode, dx: f32, dy: f32) {
     node.bounds.x += dx;
     node.bounds.y += dy;
@@ -207,7 +231,7 @@ fn shift_bounds_tree(node: &mut HtmlNode, dx: f32, dy: f32) {
         | ElementKind::Details { children, .. }
         | ElementKind::Div { children }
         | ElementKind::Form { children }
-        | ElementKind::Iframe { children }
+        | ElementKind::Iframe { children, .. }
         | ElementKind::Dialog { children, .. } => {
             for child in children.iter_mut() {
                 shift_bounds_tree(child, dx, dy);
@@ -260,4 +284,45 @@ pub fn hit_test_details_summary(node: &HtmlNode, x: f32, y: f32) -> bool {
     }
     let summary_rect = Rect::new(node.bounds.x, node.bounds.y, node.bounds.width, CONTROL_H);
     summary_rect.contains(x, y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layout_document;
+    use crate::gpu_ui::geometry::iframe_viewport;
+    use crate::gpu_ui::html::node::{ElementKind, HtmlNode};
+
+    #[test]
+    fn iframe_establishes_a_fixed_containing_viewport() {
+        let dialog = HtmlNode::new(
+            2,
+            ElementKind::Dialog {
+                children: Vec::new(),
+                floating: true,
+            },
+        );
+        let iframe = HtmlNode::new(
+            1,
+            ElementKind::Iframe {
+                width: 300.0,
+                height: 220.0,
+                children: vec![dialog],
+            },
+        );
+        let mut nodes = vec![iframe];
+
+        layout_document(&mut nodes, 960.0);
+
+        let frame = nodes[0].bounds;
+        assert_eq!((frame.width, frame.height), (300.0, 220.0));
+        let viewport = iframe_viewport(frame);
+        let ElementKind::Iframe { children, .. } = &nodes[0].kind else {
+            panic!("expected iframe");
+        };
+        let dialog = children[0].bounds;
+        assert!(dialog.x >= viewport.x);
+        assert!(dialog.y >= viewport.y);
+        assert!(dialog.right() <= viewport.right());
+        assert!(dialog.bottom() <= viewport.bottom());
+    }
 }

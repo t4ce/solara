@@ -118,7 +118,7 @@ fn toggle_details_in_children(node: &mut HtmlNode, x: f32, y: f32) -> bool {
         node::ElementKind::Element { children, .. }
         | node::ElementKind::Div { children }
         | node::ElementKind::Form { children }
-        | node::ElementKind::Iframe { children }
+        | node::ElementKind::Iframe { children, .. }
         | node::ElementKind::Dialog { children, .. } => toggle_details_recursive(children, x, y),
         node::ElementKind::Label { control, .. } => {
             toggle_details_recursive(std::slice::from_mut(control), x, y)
@@ -154,7 +154,7 @@ mod parity_baseline {
     }
 
     #[test]
-    fn current_demo_keeps_its_pre_migration_render_digest() {
+    fn current_demo_keeps_its_nested_frame_render_digest() {
         let page = crate::gpu_ui::loader::load_page(None).expect("load current demo");
         assert_eq!(page.title, "HTML Only Visual Elements");
         let mut document = Document::from_dom(page.artifact, page.dom_engine, 960.0)
@@ -192,10 +192,10 @@ mod parity_baseline {
             }
             hash_bytes(&mut hash, section.text.as_bytes());
         }
-        assert_eq!(batch.shapes.len(), 131);
-        assert_eq!(batch.text.sections.len(), 81);
-        assert_eq!(document.content_height.to_bits(), 0x453c8000);
-        assert_eq!(hash, 0x3376d634311d33eb);
+        assert_eq!(batch.shapes.len(), 141);
+        assert_eq!(batch.text.sections.len(), 83);
+        assert_eq!(document.content_height.to_bits(), 0x45574000);
+        assert_eq!(hash, 0x16330a01cc729939);
     }
 
     #[test]

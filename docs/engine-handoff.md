@@ -30,14 +30,14 @@ Parsing does not execute page `<script>` elements. The retained `JsEngine` is re
 
 ## Visual parity proof
 
-The current `docs/demoui.html` is the integration fixture. Before removing `scraper`, its 960-pixel render batch was recorded as:
+The current `docs/demoui.html` is the integration fixture. Its 960-pixel render batch, including the contained `srcdoc` iframe and floating dialogs, is recorded as:
 
-- 131 shape instances
-- 81 text sections
-- content-height bits `0x453c8000`
-- FNV-1a render digest `3376d634311d33eb`
+- 141 shape instances
+- 83 text sections
+- content-height bits `0x45574000`
+- FNV-1a render digest `16330a01cc729939`
 
-`current_demo_keeps_its_pre_migration_render_digest` parses that same file through RustQJSDom, verifies the retained QuickJS runtime, and asserts all four values. A second integration test proves authored Lightning CSS reaches the active text paint batch. Run both with the full suite:
+`current_demo_keeps_its_nested_frame_render_digest` parses that same file through RustQJSDom, verifies the retained QuickJS runtime, and asserts all four values. A second integration test proves authored Lightning CSS reaches the active text paint batch. Run both with the full suite:
 
 ```bash
 cargo test --locked

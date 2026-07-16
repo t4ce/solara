@@ -312,6 +312,8 @@ pub enum ElementKind {
         height: f32,
     },
     Iframe {
+        width: f32,
+        height: f32,
         children: Vec<HtmlNode>,
     },
     Image {

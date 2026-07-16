@@ -76,9 +76,15 @@ impl NodeParser<'_> {
                     None => Vec::new(),
                 };
                 ElementKind::Iframe {
+                    width: number_attribute(element, "width", 300.0),
+                    height: number_attribute(element, "height", 150.0),
                     children: iframe_children,
                 }
             }
+            "dialog" => ElementKind::Dialog {
+                children: self.parse_children(element)?,
+                floating: true,
+            },
             "svg" => self.parse_svg(element),
             "progress" => ElementKind::Progress {
                 value: number_attribute(element, "value", 0.0),
@@ -322,6 +328,28 @@ mod tests {
         assert!(main.style_ref.is_some());
     }
 
+    #[test]
+    fn preserves_iframe_viewport_and_specializes_its_dialog() {
+        let nodes = parse_source(
+            "<iframe width='320' height='180' srcdoc='<dialog>Nested</dialog>'></iframe>",
+        );
+        let iframe = find_tag(&nodes, "iframe").expect("iframe is present");
+        let ElementKind::Iframe {
+            width,
+            height,
+            children,
+        } = &iframe.kind
+        else {
+            panic!("expected specialized iframe");
+        };
+        assert_eq!((*width, *height), (320.0, 180.0));
+        let dialog = find_tag(children, "dialog").expect("srcdoc dialog is present");
+        assert!(matches!(
+            dialog.kind,
+            ElementKind::Dialog { floating: true, .. }
+        ));
+    }
+
     fn collect_tags<'a>(nodes: &'a [HtmlNode], tags: &mut Vec<&'a str>) {
         for node in nodes {
             tags.push(node.kind.css_tag_name());
@@ -330,7 +358,7 @@ mod tests {
                 | ElementKind::Details { children, .. }
                 | ElementKind::Div { children }
                 | ElementKind::Form { children }
-                | ElementKind::Iframe { children }
+                | ElementKind::Iframe { children, .. }
                 | ElementKind::Dialog { children, .. } => collect_tags(children, tags),
                 ElementKind::Label { control, .. } => {
                     collect_tags(std::slice::from_ref(control), tags)
@@ -346,7 +374,13 @@ mod tests {
                 return Some(node);
             }
             let found = match &node.kind {
-                ElementKind::Element { children, .. } => find_tag(children, tag),
+                ElementKind::Element { children, .. }
+                | ElementKind::Details { children, .. }
+                | ElementKind::Div { children }
+                | ElementKind::Form { children }
+                | ElementKind::Iframe { children, .. }
+                | ElementKind::Dialog { children, .. } => find_tag(children, tag),
+                ElementKind::Label { control, .. } => find_tag(std::slice::from_ref(control), tag),
                 _ => None,
             };
             if found.is_some() {

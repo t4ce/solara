@@ -2,7 +2,7 @@
 
 use rust_qjs_dom::StyleIndex;
 
-use crate::gpu_ui::geometry::{CONTROL_H, Rect, TEXT_LINE};
+use crate::gpu_ui::geometry::{CONTROL_H, Rect, TEXT_LINE, iframe_viewport};
 use crate::gpu_ui::html::node::{ButtonType, ElementKind, HtmlNode, Inline, InputType, SvgChild};
 use crate::gpu_ui::html::style::{self, ResolvedStyle};
 use crate::gpu_ui::shapes::ShapeInstance;
@@ -86,8 +86,11 @@ impl PaintStyle {
 
 #[cfg(test)]
 mod tests {
-    use super::{PaintStyle, Theme};
+    use super::{PaintStyle, Theme, clip_shapes, clip_text};
+    use crate::gpu_ui::geometry::Rect;
     use crate::gpu_ui::html::style::ResolvedStyle;
+    use crate::gpu_ui::shapes::ShapeInstance;
+    use crate::gpu_ui::text::{TextBatch, TextSection};
 
     #[test]
     fn text_properties_inherit_without_inheriting_background() {
@@ -107,6 +110,32 @@ mod tests {
         assert_eq!(child.text, parent.text);
         assert_eq!(child.font_scale, parent.font_scale);
         assert_eq!(child.background, None);
+    }
+
+    #[test]
+    fn iframe_clip_trims_descendant_paint_to_its_viewport() {
+        let clip = Rect::new(20.0, 30.0, 100.0, 80.0);
+        let mut shapes = vec![ShapeInstance::rect(
+            Rect::new(100.0, 90.0, 50.0, 50.0),
+            [1.0; 4],
+        )];
+        clip_shapes(&mut shapes, clip);
+        assert_eq!(shapes[0].pos_size, [100.0, 90.0, 20.0, 20.0]);
+
+        let mut text = TextBatch {
+            sections: vec![TextSection {
+                x: 100.0,
+                y: 90.0,
+                width: 50.0,
+                height: 30.0,
+                text: "clipped".to_string(),
+                color: [1.0; 4],
+                scale: 14.0,
+            }],
+        };
+        clip_text(&mut text, clip);
+        assert_eq!(text.sections[0].width, 20.0);
+        assert_eq!(text.sections[0].height, 20.0);
     }
 }
 
@@ -336,7 +365,7 @@ fn paint_node(
                 theme.text,
             );
         }
-        ElementKind::Iframe { children } => {
+        ElementKind::Iframe { children, .. } => {
             fill_rect(shapes, bounds, theme.iframe_bg);
             stroke_rect(shapes, bounds, theme.border, 2.0);
             text::queue_left(
@@ -346,21 +375,24 @@ fn paint_node(
                 "iframe",
                 theme.text,
             );
-            let inner = bounds.inset(8.0);
+            let viewport = iframe_viewport(bounds);
+            let mut child_shapes = Vec::new();
+            let mut child_text = TextBatch::default();
             for child in children {
-                let mut cloned = child.clone();
-                let dy = inner.y - cloned.bounds.y;
-                shift_bounds(&mut cloned, 0.0, dy);
                 paint_node(
-                    &cloned,
+                    child,
                     scroll_y,
                     style_index,
                     theme,
                     Some(style),
-                    shapes,
-                    text_out,
+                    &mut child_shapes,
+                    &mut child_text,
                 );
             }
+            clip_shapes(&mut child_shapes, viewport);
+            clip_text(&mut child_text, viewport);
+            shapes.extend(child_shapes);
+            text_out.sections.extend(child_text.sections);
         }
         ElementKind::Image { alt, .. } => {
             fill_rect(shapes, bounds, theme.img_fill);
@@ -869,21 +901,33 @@ fn offset_rect(rect: Rect, dx: f32, dy: f32) -> Rect {
     Rect::new(rect.x + dx, rect.y + dy, rect.width, rect.height)
 }
 
-fn shift_bounds(node: &mut HtmlNode, dx: f32, dy: f32) {
-    node.bounds.x += dx;
-    node.bounds.y += dy;
-    match &mut node.kind {
-        ElementKind::Element { children, .. }
-        | ElementKind::Details { children, .. }
-        | ElementKind::Div { children }
-        | ElementKind::Form { children }
-        | ElementKind::Iframe { children }
-        | ElementKind::Dialog { children, .. } => {
-            for child in children.iter_mut() {
-                shift_bounds(child, dx, dy);
-            }
+fn clip_shapes(shapes: &mut Vec<ShapeInstance>, clip: Rect) {
+    shapes.retain_mut(|shape| {
+        let bounds = Rect::new(
+            shape.pos_size[0],
+            shape.pos_size[1],
+            shape.pos_size[2],
+            shape.pos_size[3],
+        );
+        let Some(clipped) = bounds.intersection(clip) else {
+            return false;
+        };
+        shape.pos_size = [clipped.x, clipped.y, clipped.width, clipped.height];
+        true
+    });
+}
+
+fn clip_text(text: &mut TextBatch, clip: Rect) {
+    text.sections.retain_mut(|section| {
+        if section.x < clip.x || section.y < clip.y {
+            return false;
         }
-        ElementKind::Label { control, .. } => shift_bounds(control, dx, dy),
-        _ => {}
-    }
+        let bounds = Rect::new(section.x, section.y, section.width, section.height);
+        let Some(clipped) = bounds.intersection(clip) else {
+            return false;
+        };
+        section.width = clipped.width;
+        section.height = clipped.height;
+        true
+    });
 }
