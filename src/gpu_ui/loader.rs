@@ -156,41 +156,6 @@ fn find_element<'a>(node: &'a DomNode, tag: &str) -> Option<&'a DomNode> {
         })
 }
 
-/// Dormant legacy input path for Solara's preserved Stylo experiment.
-/// Active linked CSS now enters through `DomEngine` before artifact creation.
-#[allow(dead_code)]
-fn collect_stylesheets(node: &DomNode, base_url: &Url, css: &mut String) -> Result<(), String> {
-    match node.tag_name.as_deref() {
-        Some("style") => append_stylesheet(css, &raw_text_content(node)),
-        Some("link") if is_stylesheet(node) => {
-            let href = node
-                .attribute("href")
-                .expect("stylesheet link must have an href");
-            let stylesheet_url = base_url
-                .join(href)
-                .map_err(|error| format!("invalid stylesheet URL {href:?}: {error}"))?;
-            append_stylesheet(css, &fetch_text(&stylesheet_url)?);
-        }
-        _ => {}
-    }
-    for child in &node.children {
-        collect_stylesheets(child, base_url, css)?;
-    }
-    if let Some(content) = &node.content {
-        collect_stylesheets(content, base_url, css)?;
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn is_stylesheet(node: &DomNode) -> bool {
-    node.attribute("href").is_some()
-        && node.attribute("rel").is_some_and(|rel| {
-            rel.split_ascii_whitespace()
-                .any(|part| part.eq_ignore_ascii_case("stylesheet"))
-        })
-}
-
 fn raw_text_content(node: &DomNode) -> String {
     let mut text = String::new();
     append_raw_text(node, &mut text);
@@ -207,14 +172,6 @@ fn append_raw_text(node: &DomNode, text: &mut String) {
     if let Some(content) = &node.content {
         append_raw_text(content, text);
     }
-}
-
-#[allow(dead_code)]
-fn append_stylesheet(target: &mut String, stylesheet: &str) {
-    if !target.is_empty() {
-        target.push('\n');
-    }
-    target.push_str(stylesheet);
 }
 
 fn resolve_input(input: &str) -> Result<Url, String> {

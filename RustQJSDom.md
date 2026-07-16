@@ -35,7 +35,9 @@ The preserved revision contains the completed migration scope:
 - trace-only Solara asset URL resolution and request logging;
 - resolved favicon metadata retained by Solara;
 - no image/media decoding, caching, streaming, upload, or paint wiring;
-- the previous Solara Stylo path preserved as dormant code.
+- the previous Solara CSS experiment was preserved at archive time; it was
+  subsequently removed from the active fork in favor of the sole
+  RustQJSDom/Lightning CSS path.
 
 Before archival, RustQJSDom's full proof script passed. After pinning the engine,
 Solara passed formatting, locked check, 17 tests, and Clippy with warnings denied.

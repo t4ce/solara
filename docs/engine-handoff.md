@@ -25,9 +25,8 @@ decode, cache, media stream, image upload, or paint binding is part of this
 migration. The resolved favicon URL remains on `LoadedPage`/`GpuUiApp` for a
 future window-icon loader.
 
-The previous Solara `CssEngine` and its stylesheet collector remain in the
-repository as a dormant Stylo experiment. They compile and retain their tests,
-but have no active loading or painting callers.
+The previous Solara `CssEngine`, Stylo dependencies, and duplicate stylesheet
+collector have been removed. RustQJSDom/Lightning CSS is the sole CSS path.
 
 Parsing does not execute page `<script>` elements. The retained `JsEngine` is ready for Solara's future `window` and `document` host bindings without creating a second JavaScript runtime.
 

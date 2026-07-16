@@ -2,9 +2,6 @@
 
 mod app;
 mod async_utils;
-// Preserved for future Stylo experiments. The active cascade and style table
-// now come from RustQJSDom/Lightning CSS; nothing in paint or loading calls it.
-mod css;
 mod geometry;
 mod html;
 mod loader;
