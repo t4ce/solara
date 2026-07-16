@@ -1,14 +1,12 @@
 use style::color::AbsoluteColor;
-use style::properties::{
-    parse_style_attribute, PropertyDeclaration, PropertyDeclarationBlock,
-};
+use style::properties::{PropertyDeclaration, PropertyDeclarationBlock, parse_style_attribute};
 use style::stylesheets::{CssRuleType, UrlExtraData};
 use style::values::specified::border::BorderSideWidth;
 use style::values::specified::color::ColorPropertyValue;
 use style::values::specified::font::{FontSize as SpecifiedFontSize, FontSizeKeyword};
 use style::values::specified::{Color as SpecifiedColor, LengthPercentage, NoCalcLength};
-use style_traits::values::CssWriter;
 use style_traits::ToCss;
+use style_traits::values::CssWriter;
 use url::Url;
 
 #[derive(Clone, Debug, Default)]

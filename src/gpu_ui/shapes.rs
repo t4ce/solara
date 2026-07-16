@@ -46,10 +46,7 @@ impl ShapeInstance {
 
 pub fn as_bytes<T: Copy>(value: &T) -> &[u8] {
     unsafe {
-        std::slice::from_raw_parts(
-            (value as *const T).cast::<u8>(),
-            std::mem::size_of::<T>(),
-        )
+        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
     }
 }
 

@@ -2,200 +2,34 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <base target="_self">
-    <link rel="stylesheet" href="demoui.css">
-    <title>Complete HTML Element Catalog</title>
-    <style media="not all">/* The style element is included for element coverage. */</style>
+    <title>HTML Only Visual Elements</title>
 </head>
 <body>
 
-<header>
-    <hgroup>
-        <h1>Solara HTML Element Catalog</h1>
-        <p>Every conforming HTML element is represented on this page.</p>
-    </hgroup>
-    <nav aria-label="Demo navigation">
-        <a href="#text-elements">Text</a>
-        <a href="#embedded-elements">Embedded content</a>
-        <a href="#form-elements">Forms</a>
-    </nav>
-</header>
+<h1>HTML Without CSS or JavaScript</h1>
 
-<main>
+<h2>Tree (Details + Checkbox)</h2>
 
-<p><a href="/helloworld">Open Hello World page</a></p>
-<p><a href="/svg-demo">Open SVG demo page</a></p>
-<i>kursiver (schräger)</i> 
-<h1>HTML Elements with Default CSS</h1>
-<b>and this is bold text</b>
-
-<section id="element-catalog">
-    <h2>Complete Element Catalog</h2>
-
-    <article>
-        <h3>Sections and Headings</h3>
-        <h4>Fourth-level heading</h4>
-        <h5>Fifth-level heading</h5>
-        <h6>Sixth-level heading</h6>
-        <address>Solara Project, local browser laboratory</address>
-        <aside>Aside content provides related context.</aside>
-    </article>
-
-    <section id="text-elements">
-        <h3>Text Semantics</h3>
-        <p>
-            <abbr title="HyperText Markup Language">HTML</abbr>
-            <b>bold</b>
-            <bdi>isolated text</bdi>
-            <bdo dir="rtl">bidirectional override</bdo>
-            <cite>Solara Notes</cite>
-            <code>cargo run -- ./docs/demoui.html</code>
-            <data value="113">113 elements</data>
-            <del>removed text</del>
-            <dfn>render tree</dfn>
-            <em>emphasis</em>
-            <i>alternate voice</i>
-            <ins>inserted text</ins>
-            <kbd>Ctrl+R</kbd>
-            <mark>highlighted text</mark>
-            <q>short quotation</q>
-            <ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby>
-            <s>no longer accurate</s>
-            <samp>render complete</samp>
-            <small>small print</small>
-            <span>generic span</span>
-            <strong>strong importance</strong>
-            H<sub>2</sub>O and x<sup>2</sup>
-            <time datetime="2026-06-22">June 22, 2026</time>
-            <u>annotated text</u>
-            <var>viewport_width</var>
-            break<wbr>opportunity<br>
-            next line
-        </p>
-        <blockquote cite="https://html.spec.whatwg.org/">
-            HTML defines the structure and semantics of web documents.
-        </blockquote>
-        <pre>preformatted
-    text preserves spacing</pre>
-    </section>
-
-    <section>
-        <h3>Grouping Content</h3>
-        <dl>
-            <dt>DOM</dt>
-            <dd>Document Object Model</dd>
-            <dt>CSS</dt>
-            <dd>Cascading Style Sheets</dd>
-        </dl>
-        <menu>
-            <li>Back</li>
-            <li>Reload</li>
-        </menu>
-        <figure>
-            <div class="figure-placeholder">Rendered figure content</div>
-            <figcaption>A figure caption</figcaption>
-        </figure>
-    </section>
-
-    <section id="embedded-elements">
-        <h3>Embedded Content</h3>
-        <audio controls>
-            <source src="data:audio/wav;base64," type="audio/wav">
-            <track kind="captions" label="English">
-            Audio fallback text
-        </audio>
-        <video controls width="240" height="135">
-            <source src="data:video/mp4;base64," type="video/mp4">
-            Video fallback text
-        </video>
-        <picture>
-            <source media="(min-width: 800px)" srcset="data:image/png;base64,iVBORw0KGgo=">
-            <img src="data:image/png;base64,iVBORw0KGgo=" alt="Picture fallback" width="120" height="80" usemap="#demo-map">
-        </picture>
-        <map name="demo-map" id="demo-map">
-            <area shape="rect" coords="0,0,60,80" href="#text-elements" alt="Text section">
-            <area shape="rect" coords="60,0,120,80" href="#form-elements" alt="Form section">
-        </map>
-        <object data="data:text/plain,Object%20element" type="text/plain" width="240" height="60">
-            Object fallback text
-        </object>
-        <embed src="data:text/plain,Embed%20element" type="text/plain" width="240" height="60">
-    </section>
-
-    <section id="form-elements">
-        <h3>Additional Form Elements</h3>
-        <form>
-            <fieldset>
-                <legend>Browser settings</legend>
-                <label for="engine-choice">Engine</label>
-                <input id="engine-choice" name="engine" list="engine-options" value="Solara">
-                <datalist id="engine-options">
-                    <option value="Solara"></option>
-                    <option value="Servo"></option>
-                </datalist>
-                <label for="channel-choice">Channel</label>
-                <select id="channel-choice" name="channel">
-                    <optgroup label="Stable">
-                        <option>Release</option>
-                    </optgroup>
-                    <optgroup label="Development">
-                        <option>Nightly</option>
-                    </optgroup>
-                </select>
-                <output name="status" for="engine-choice">Ready</output>
-            </fieldset>
-        </form>
-        <select class="customizable-select">
-            <button type="button"><selectedcontent></selectedcontent></button>
-            <option selected>Customizable option</option>
-        </select>
-    </section>
-
-    <section>
-        <h3>Scripting and Web Components</h3>
-        <noscript>Scripting is disabled; this fallback remains visible.</noscript>
-        <script type="application/json">{"demo":"non-executable script element"}</script>
-        <template id="element-template"><p>Inert template content</p></template>
-        <slot name="demo-slot">Slot fallback content</slot>
-    </section>
-</section>
-
-<ol>
-  <li>Coffee</li>
-  <li>Tea</li>
-  <li>Milk</li>
-</ol>
-
-<ul>
-  <li>Coffee</li>
-  <li>Tea</li>
-  <li>Milk</li>
-</ul>
-
-<details>
+<details open>
     <summary><input type="checkbox"> Project</summary>
     <div>
         <p>A node can contain arbitrary HTML when expanded.</p>
 
         <details>
-            <summary><input type="checkbox"> src</summary>
+            <summary>src</summary>
             <div>
                 <details>
-                    <summary><input type="checkbox"> main.ts</summary>
-                    <div></div>
+                    <summary>main.ts</summary>
                 </details>
 
                 <details>
-                    <summary><input type="checkbox"> widgets</summary>
+                    <summary>widgets</summary>
                     <div>
                         <details>
-                            <summary><input type="checkbox"> color.ts</summary>
-                            <div></div>
+                            <summary>color.ts</summary>
                         </details>
                         <details>
-                            <summary><input type="checkbox"> number.ts</summary>
-                            <div></div>
+                            <summary>number.ts</summary>
                         </details>
                     </div>
                 </details>
@@ -203,8 +37,7 @@
         </details>
 
         <details>
-            <summary><input type="checkbox"> package.json</summary>
-            <div></div>
+            <summary>package.json</summary>
         </details>
     </div>
 </details>
@@ -226,6 +59,9 @@
 
 <p>
     <iframe width="600" height="600" srcdoc="<!DOCTYPE html><html><body><h2>Inside iframe</h2><p><input type='text' value='Nested input'></p><h2>Dialog</h2><dialog><p>Floating dialog (drag the border/background).</p><p><label>Dialog input: <input type='text' value='Drag outside me'></label></p><p><button type='button'>OK</button><button type='button'>Cancel</button></p></dialog></body></html>"></iframe>
+</p>
+<p>
+    <!-- RGBA channel spinners are now internal to the <color> widget. -->
 </p>
 
 <h2>Buttons and Inputs</h2>
@@ -251,10 +87,6 @@
 <p><label>Month: <input type="month" value="2026-02"></label></p>
 <p><label>Week (simplified): <input type="week" value="2026-W06"></label></p>
 <p><label>Datetime-local (simplified): <input type="datetime-local" value="2026-02-01T12:34:56"></label></p>
-
-<h2>Tree (Details + Checkbox)</h2>
-<p>(JONAS BAETHKE HALLO TEXT OKAY FRAGE GUT PROBE DREI NEUN)</p>
-<p>[{abcdefghijklmnopqrstuvwxyz0123456789 +-;:*/?!$§</p>
 
 <details>
 <form>
@@ -324,6 +156,7 @@
 
 <hr>
 
+
 <dialog>
     <p>Floating dialog (drag the border/background).</p>
     <p>
@@ -344,33 +177,18 @@
 <h2>Table</h2>
 
 <table border="1">
-    <caption>Inventory</caption>
-    <colgroup>
-        <col class="item-column">
-        <col class="quantity-column">
-    </colgroup>
-    <thead>
-        <tr>
-            <th>Item</th>
-            <th>Quantity</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td>Apples</td>
-            <td>3</td>
-        </tr>
-        <tr>
-            <td>Oranges</td>
-            <td>5</td>
-        </tr>
-    </tbody>
-    <tfoot>
-        <tr>
-            <th>Total</th>
-            <td>8</td>
-        </tr>
-    </tfoot>
+    <tr>
+        <th>Item</th>
+        <th>Quantity</th>
+    </tr>
+    <tr>
+        <td>Apples</td>
+        <td>3</td>
+    </tr>
+    <tr>
+        <td>Oranges</td>
+        <td>5</td>
+    </tr>
 </table>
 </form>
 
@@ -387,15 +205,13 @@
 </p>
 
     <img
-        src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAABAAAAAQBPJcTWAAAAF0lEQVR4nGP4y8BAEiJN9aiGUQ1DSgMAfsz9ATa/hGgAAAAASUVORK5CYII="
-        alt="Inline red PNG demo"
-        width="240"
-        height="240">
-
-</main>
+        src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Microsoft_icon.svg/960px-Microsoft_icon.svg.png"
+        alt="Microsoft icon PNG"
+        width="256"
+        height="256">
 
 <footer>
-    <p>Complete HTML element demo with Solara default styles</p>
+    <p>Pure HTML demo — browser default styling only</p>
 </footer>
 
 </body>

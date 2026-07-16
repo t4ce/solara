@@ -1,6 +1,6 @@
-use crate::gpu_ui::geometry::{Rect, BLOCK_GAP, CONTROL_H, PAGE_PAD, TEXT_LINE};
+use crate::gpu_ui::geometry::{BLOCK_GAP, CONTROL_H, PAGE_PAD, Rect, TEXT_LINE};
 use crate::gpu_ui::html::node::{
-    inline_width, ButtonType, ElementKind, HtmlNode, HtmlTag, InputType,
+    ButtonType, ElementKind, HtmlNode, HtmlTag, InputType, inline_width,
 };
 use crate::gpu_ui::text;
 
@@ -78,9 +78,7 @@ fn layout_node(node: &mut HtmlNode, ctx: &mut LayoutContext) {
         }
         ElementKind::Label { text: _, control } => layout_label(control, ctx),
         ElementKind::Input {
-            input_type,
-            label,
-            ..
+            input_type, label, ..
         } => match input_type {
             InputType::Checkbox | InputType::Radio => ctx.place_block(TEXT_LINE),
             _ => {
@@ -146,13 +144,7 @@ fn layout_label(control: &mut HtmlNode, ctx: &mut LayoutContext) -> Rect {
     rect
 }
 
-fn layout_control_in_row(
-    node: &mut HtmlNode,
-    x: f32,
-    y: f32,
-    row_h: f32,
-    content_width: f32,
-) {
+fn layout_control_in_row(node: &mut HtmlNode, x: f32, y: f32, row_h: f32, content_width: f32) {
     let max_w = (content_width - (x - PAGE_PAD)).max(80.0);
     match &mut node.kind {
         ElementKind::Input { input_type, .. } => match input_type {
@@ -174,7 +166,12 @@ fn layout_control_in_row(
             node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, w, CONTROL_H);
         }
         ElementKind::Select { .. } => {
-            node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, max_w.min(200.0), CONTROL_H);
+            node.bounds = Rect::new(
+                x,
+                y + (row_h - CONTROL_H) * 0.5,
+                max_w.min(200.0),
+                CONTROL_H,
+            );
         }
         _ => {
             node.bounds = Rect::new(x, y, max_w, row_h);
@@ -249,7 +246,12 @@ fn layout_children(ctx: &mut LayoutContext, children: &mut [HtmlNode]) -> Rect {
     for child in children.iter_mut() {
         layout_node(child, ctx);
     }
-    Rect::new(PAGE_PAD, start_y, ctx.content_width(), ctx.cursor_y - start_y)
+    Rect::new(
+        PAGE_PAD,
+        start_y,
+        ctx.content_width(),
+        ctx.cursor_y - start_y,
+    )
 }
 
 pub fn hit_test_details_summary(node: &HtmlNode, x: f32, y: f32) -> bool {

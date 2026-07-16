@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 use wgpu_glyph::{GlyphBrushBuilder, Section, Text};
 use winit::window::Window;
 
-use crate::gpu_ui::shapes::{as_bytes, cast_slice, ScreenUniform, ShapeInstance};
+use crate::gpu_ui::shapes::{ScreenUniform, ShapeInstance, as_bytes, cast_slice};
 use crate::gpu_ui::text::{self, TextBatch};
 
 const SHAPE_SHADER: &str = include_str!("shaders/shape.wgsl");
@@ -114,11 +114,12 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(SHAPE_SHADER.into()),
         });
 
-        let shape_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shape_pipeline_layout"),
-            bind_group_layouts: &[&screen_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let shape_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("shape_pipeline_layout"),
+                bind_group_layouts: &[&screen_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let shape_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shape_pipeline"),
@@ -194,9 +195,11 @@ impl Renderer {
             self.glyph_brush.queue(Section {
                 screen_position: (section.x, section.y),
                 bounds: (section.width, section.height),
-                text: vec![Text::new(&section.text)
-                    .with_color(section.color)
-                    .with_scale(section.scale)],
+                text: vec![
+                    Text::new(&section.text)
+                        .with_color(section.color)
+                        .with_scale(section.scale),
+                ],
                 ..Section::default()
             });
         }

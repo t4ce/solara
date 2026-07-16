@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::sync::OnceLock;
 
 use wgpu_glyph::ab_glyph::{Font, FontArc};
@@ -108,6 +110,7 @@ pub fn queue_left_scaled(
     push_section(batch, x, y, width, scale * 1.25, text, color, scale);
 }
 
+#[allow(dead_code)]
 pub fn queue_wrapped(
     batch: &mut TextBatch,
     x: f32,

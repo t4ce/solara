@@ -21,10 +21,14 @@ include = [
     "src/gpu_ui/fonts/*",
     "docs/demoui.html",
     "docs/demoui.css",
+    "docs/engine-handoff.md",
 ]
 
 [dependencies]
-scraper = "0.27.0"
+env_logger = "0.11"
+log = "0.4"
+rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+# Dormant legacy CSS experiment; active styles come from RustQJSDom/Lightning CSS.
 stylo = { version = "0.18", default-features = false, features = ["servo"] }
 stylo_traits = { version = "0.18", default-features = false, features = ["servo"] }
 ureq = "3.3.0"

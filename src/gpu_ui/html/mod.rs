@@ -2,14 +2,14 @@ mod layout;
 mod node;
 mod paint;
 mod parser;
+mod style;
 
 pub use node::HtmlNode;
 
 use layout::{document_height, hit_test_details_summary, layout_document};
 use paint::paint_document;
 use parser::parse_html;
-
-use crate::gpu_ui::css::CssEngine;
+use rust_qjs_dom::{DomArtifact, DomEngine, JsEngine};
 
 #[derive(Default)]
 pub struct RenderBatch {
@@ -28,22 +28,46 @@ pub struct Document {
     pub nodes: Vec<HtmlNode>,
     pub scroll_y: f32,
     pub content_height: f32,
+    dom: DomArtifact,
+    dom_engine: DomEngine,
     page_width: f32,
-    css: CssEngine,
 }
 
 impl Document {
-    pub fn from_html(html: &str, css: &str, page_width: f32) -> Self {
-        let mut nodes = parse_html(html);
+    pub fn from_dom(
+        dom: DomArtifact,
+        mut dom_engine: DomEngine,
+        page_width: f32,
+    ) -> Result<Self, String> {
+        let mut nodes = parse_html(&dom, &mut dom_engine)?;
         layout_document(&mut nodes, page_width);
         let content_height = document_height(&nodes);
-        Self {
+        let mut document = Self {
             nodes,
             scroll_y: 0.0,
             content_height,
+            dom,
+            dom_engine,
             page_width,
-            css: CssEngine::from_css(css),
-        }
+        };
+        let bootstrap = format!(
+            "globalThis.__solara = Object.freeze({{ domArtifactVersion: {} }});",
+            document.dom().schema_version
+        );
+        document
+            .js_mut()
+            .eval_void(&bootstrap, "<solara-bootstrap>")
+            .map_err(|error| format!("failed to initialize Solara's JavaScript host: {error}"))?;
+        Ok(document)
+    }
+
+    pub fn dom(&self) -> &DomArtifact {
+        &self.dom
+    }
+
+    /// Returns the same QuickJS runtime that produced this document's Parse5 DOM.
+    pub fn js_mut(&mut self) -> &mut JsEngine {
+        self.dom_engine.js_mut()
     }
 
     pub fn relayout(&mut self, page_width: f32) {
@@ -108,10 +132,98 @@ pub fn collect_batch(document: &Document, scale: f32, batch: &mut RenderBatch) {
     paint_document(
         &document.nodes,
         document.scroll_y,
-        &document.css,
+        &document.dom.style_index,
         &mut batch.shapes,
         &mut batch.text,
     );
     crate::gpu_ui::shapes::scale_shape_instances(&mut batch.shapes, scale);
     crate::gpu_ui::text::scale_text_batch(&mut batch.text, scale);
+}
+
+#[cfg(test)]
+mod parity_baseline {
+    use rust_qjs_dom::DomEngine;
+
+    use super::{Document, RenderBatch, collect_batch};
+
+    fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+
+    #[test]
+    fn current_demo_keeps_its_pre_migration_render_digest() {
+        let page = crate::gpu_ui::loader::load_page(None).expect("load current demo");
+        assert_eq!(page.title, "HTML Only Visual Elements");
+        let mut document = Document::from_dom(page.artifact, page.dom_engine, 960.0)
+            .expect("adapt current demo DOM");
+        assert_eq!(document.dom().schema_version, 2);
+        assert_eq!(
+            document
+                .js_mut()
+                .eval_json("21 * 2", "<solara-parity>")
+                .expect("retained QuickJS runtime evaluates JavaScript")
+                .as_i64(),
+            Some(42)
+        );
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        let mut hash = 0xcbf29ce484222325_u64;
+        for shape in &batch.shapes {
+            for value in shape.pos_size.into_iter().chain(shape.color) {
+                hash_bytes(&mut hash, &value.to_bits().to_le_bytes());
+            }
+            hash_bytes(&mut hash, &shape.shape_type.to_le_bytes());
+        }
+        for section in &batch.text.sections {
+            for value in [
+                section.x,
+                section.y,
+                section.width,
+                section.height,
+                section.scale,
+            ] {
+                hash_bytes(&mut hash, &value.to_bits().to_le_bytes());
+            }
+            for value in section.color {
+                hash_bytes(&mut hash, &value.to_bits().to_le_bytes());
+            }
+            hash_bytes(&mut hash, section.text.as_bytes());
+        }
+        assert_eq!(batch.shapes.len(), 131);
+        assert_eq!(batch.text.sections.len(), 81);
+        assert_eq!(document.content_height.to_bits(), 0x453c8000);
+        assert_eq!(hash, 0x3376d634311d33eb);
+    }
+
+    #[test]
+    fn authored_lightning_css_reaches_the_active_paint_batch() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                "<style>main { color: #123456 }</style><main>Styled by Lightning CSS</main>",
+                "https://solara.test/",
+            )
+            .expect("document parses");
+        let document = Document::from_dom(artifact, engine, 960.0).expect("document adapts");
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        let styled = batch
+            .text
+            .sections
+            .iter()
+            .find(|section| section.text.contains("Styled by Lightning CSS"))
+            .expect("styled text section");
+        assert_eq!(
+            styled.color,
+            [
+                0x12 as f32 / 255.0,
+                0x34 as f32 / 255.0,
+                0x56 as f32 / 255.0,
+                1.0
+            ]
+        );
+    }
 }

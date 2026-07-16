@@ -1,4 +1,4 @@
-use crate::gpu_ui::css::resolve::{parse_declarations, ResolvedStyle};
+use crate::gpu_ui::css::resolve::{ResolvedStyle, parse_declarations};
 use crate::gpu_ui::html::HtmlNode;
 
 #[derive(Clone, Debug)]
@@ -102,10 +102,7 @@ fn strip_comments(css: &str) -> String {
 }
 
 fn parse_selectors(input: &str) -> Vec<SimpleSelector> {
-    input
-        .split(',')
-        .filter_map(parse_one_selector)
-        .collect()
+    input.split(',').filter_map(parse_one_selector).collect()
 }
 
 fn parse_one_selector(input: &str) -> Option<SimpleSelector> {

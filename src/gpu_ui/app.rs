@@ -15,18 +15,27 @@ const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 720;
 
 pub fn run(source: Option<String>) -> Result<(), String> {
-    let page = load_page(source.as_deref())?;
-    println!("Loading {}", page.url);
+    let LoadedPage {
+        url,
+        favicon_url,
+        title,
+        artifact,
+        dom_engine,
+    } = load_page(source.as_deref())?;
+    println!("Loading {url}");
+    let document = Document::from_dom(artifact, dom_engine, WINDOW_WIDTH as f32)?;
     let event_loop =
         EventLoop::new().map_err(|error| format!("failed to create event loop: {error}"))?;
-    let mut app = GpuUiApp::new(page);
+    let mut app = GpuUiApp::new(title, favicon_url, document);
     event_loop
         .run_app(&mut app)
         .map_err(|error| format!("event loop failed: {error}"))
 }
 
 struct GpuUiApp {
-    initial_page: Option<LoadedPage>,
+    initial_title: Option<String>,
+    favicon_url: Option<url::Url>,
+    initial_document: Option<Document>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     document: Option<Document>,
@@ -37,9 +46,11 @@ struct GpuUiApp {
 }
 
 impl GpuUiApp {
-    fn new(page: LoadedPage) -> Self {
+    fn new(title: String, favicon_url: Option<url::Url>, document: Document) -> Self {
         Self {
-            initial_page: Some(page),
+            initial_title: Some(title),
+            favicon_url,
+            initial_document: Some(document),
             window: None,
             renderer: None,
             document: None,
@@ -103,11 +114,18 @@ impl ApplicationHandler for GpuUiApp {
             return;
         }
 
-        let page = self
-            .initial_page
+        let title = self
+            .initial_title
             .take()
-            .expect("initial page must be available before creating the window");
-        let window_title = format!("{} - Solara", page.title);
+            .expect("initial title must be available before creating the window");
+        let window_title = format!("{title} - Solara");
+        if let Some(favicon_url) = &self.favicon_url {
+            log::trace!(
+                target: "solara::assets",
+                "page_favicon url={} action=window-metadata no_fetch=1",
+                favicon_url,
+            );
+        }
         let window_attributes = Window::default_attributes()
             .with_title(window_title)
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
@@ -122,7 +140,12 @@ impl ApplicationHandler for GpuUiApp {
         self.scale_factor = window.scale_factor() as f32;
         let (width, height) = Self::logical_size(&window);
         self.viewport_height = height;
-        self.document = Some(Document::from_html(&page.html, &page.css, width));
+        let mut document = self
+            .initial_document
+            .take()
+            .expect("initial document must be available before creating the window");
+        document.relayout(width);
+        self.document = Some(document);
         self.window = Some(window);
         self.renderer = Some(renderer);
 

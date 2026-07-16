@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::gpu_ui::geometry::Rect;
 
 macro_rules! define_html_tags {
@@ -243,20 +245,39 @@ pub enum ElementKind {
         tag: HtmlTag,
         children: Vec<HtmlNode>,
     },
-    Heading { level: u8, text: String },
-    Paragraph { inlines: Vec<Inline> },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    Paragraph {
+        inlines: Vec<Inline>,
+    },
     HorizontalRule,
-    Link { href: String, text: String },
-    OrderedList { items: Vec<String> },
-    UnorderedList { items: Vec<String> },
+    Link {
+        href: String,
+        text: String,
+    },
+    OrderedList {
+        items: Vec<String>,
+    },
+    UnorderedList {
+        items: Vec<String>,
+    },
     Details {
         summary: String,
         summary_checkbox: bool,
         children: Vec<HtmlNode>,
     },
-    Div { children: Vec<HtmlNode> },
-    Form { children: Vec<HtmlNode> },
-    Label { text: String, control: Box<HtmlNode> },
+    Div {
+        children: Vec<HtmlNode>,
+    },
+    Form {
+        children: Vec<HtmlNode>,
+    },
+    Label {
+        text: String,
+        control: Box<HtmlNode>,
+    },
     Input {
         input_type: InputType,
         name: String,
@@ -286,17 +307,45 @@ pub enum ElementKind {
         height: f32,
         children: Vec<SvgChild>,
     },
-    Canvas { width: f32, height: f32 },
-    Iframe { children: Vec<HtmlNode> },
-    Image { width: f32, height: f32, alt: String },
-    Dialog { children: Vec<HtmlNode>, floating: bool },
-    Progress { value: f32, max: f32 },
-    Meter { value: f32, label: String },
-    Slider { value: f32, label: String },
-    Search { value: String, width: f32 },
+    Canvas {
+        width: f32,
+        height: f32,
+    },
+    Iframe {
+        children: Vec<HtmlNode>,
+    },
+    Image {
+        width: f32,
+        height: f32,
+        alt: String,
+    },
+    Dialog {
+        children: Vec<HtmlNode>,
+        floating: bool,
+    },
+    Progress {
+        value: f32,
+        max: f32,
+    },
+    Meter {
+        value: f32,
+        label: String,
+    },
+    Slider {
+        value: f32,
+        label: String,
+    },
+    Search {
+        value: String,
+        width: f32,
+    },
     Color,
-    Footer { text: String },
-    PlainText { text: String },
+    Footer {
+        text: String,
+    },
+    PlainText {
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -311,6 +360,8 @@ pub struct HtmlNode {
     pub id_attr: Option<String>,
     /// Inline `style=""` attribute text.
     pub style_attr: Option<String>,
+    /// Index into the owning RustQJSDom artifact's computed-style table.
+    pub style_ref: Option<usize>,
 }
 
 impl HtmlNode {
@@ -323,6 +374,7 @@ impl HtmlNode {
             class: None,
             id_attr: None,
             style_attr: None,
+            style_ref: None,
         }
     }
 

@@ -1,69 +1,215 @@
 use std::path::{Path, PathBuf};
 
-use scraper::{Html, Selector};
+use rust_qjs_dom::{AssetRequest, DomArtifact, DomEngine, DomNode, LoadedStylesheet};
 use url::Url;
 
 pub const DEFAULT_HTML_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/demoui.html");
 
 pub struct LoadedPage {
     pub url: Url,
-    pub html: String,
-    pub css: String,
+    pub favicon_url: Option<Url>,
     pub title: String,
+    pub artifact: DomArtifact,
+    pub dom_engine: DomEngine,
 }
 
 pub fn load_page(input: Option<&str>) -> Result<LoadedPage, String> {
     let url = resolve_input(input.unwrap_or(DEFAULT_HTML_PATH))?;
     let html = fetch_text(&url)?;
-    let document = Html::parse_document(&html);
-    let base_url = document
-        .select(&selector("base[href]")?)
-        .next()
-        .and_then(|element| element.attr("href"))
-        .and_then(|href| url.join(href).ok())
-        .unwrap_or_else(|| url.clone());
-
-    let mut css = String::new();
-    for element in document.select(&selector("style, link[href]")?) {
-        if element.value().name() == "style" {
-            append_stylesheet(&mut css, &element.text().collect::<String>());
-            continue;
-        }
-        let link = element;
-        let is_stylesheet = link.attr("rel").is_some_and(|rel| {
-            rel.split_ascii_whitespace()
-                .any(|part| part.eq_ignore_ascii_case("stylesheet"))
-        });
-        if !is_stylesheet {
-            continue;
-        }
-        let href = link.attr("href").expect("selector requires href");
-        let stylesheet_url = base_url
-            .join(href)
-            .map_err(|err| format!("invalid stylesheet URL {href:?}: {err}"))?;
-        append_stylesheet(&mut css, &fetch_text(&stylesheet_url)?);
+    let mut dom_engine = DomEngine::with_stylesheet_loader(|document_url, base_href, href| {
+        let resolved_url = resolve_resource_url(document_url, base_href, href)?;
+        let css = fetch_text(&resolved_url)?;
+        Ok(LoadedStylesheet::new(resolved_url.to_string(), css))
+    })
+    .map_err(|error| format!("failed to start DOM engine: {error}"))?;
+    let artifact = dom_engine
+        .parse(&html, url.as_str())
+        .map_err(|error| format!("failed to parse {url}: {error}"))?;
+    let base_href = artifact.asset_index.base_href.as_deref();
+    let favicon_url = artifact
+        .extracted
+        .favicon_href
+        .as_deref()
+        .and_then(|href| resolve_resource_url(url.as_str(), base_href, href).ok());
+    trace_asset_requests(&artifact, &url);
+    if let Some(favicon_url) = &favicon_url {
+        log::trace!(
+            target: "solara::assets",
+            "favicon_resolved raw_url={:?} resolved_url={} action=metadata-only no_fetch=1",
+            artifact.extracted.favicon_href.as_deref().unwrap_or_default(),
+            favicon_url,
+        );
     }
 
-    let title = document
-        .select(&selector("title")?)
-        .next()
-        .map(|element| element.text().collect::<String>())
-        .map(|title| title.trim().to_string())
+    let title = find_element(&artifact.document, "title")
+        .map(raw_text_content)
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_string)
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| "Solara".to_string());
 
     Ok(LoadedPage {
         url,
-        html,
-        css,
+        favicon_url,
         title,
+        artifact,
+        dom_engine,
     })
 }
 
-fn selector(value: &str) -> Result<Selector, String> {
-    Selector::parse(value).map_err(|err| format!("invalid internal selector {value:?}: {err}"))
+fn resolve_resource_url(
+    document_url: &str,
+    base_href: Option<&str>,
+    raw_url: &str,
+) -> Result<Url, String> {
+    let document = Url::parse(document_url)
+        .map_err(|error| format!("invalid document URL {document_url:?}: {error}"))?;
+    let base = match base_href.filter(|href| !href.is_empty()) {
+        Some(href) => document
+            .join(href)
+            .map_err(|error| format!("invalid document base URL {href:?}: {error}"))?,
+        None => document,
+    };
+    base.join(raw_url)
+        .map_err(|error| format!("invalid resource URL {raw_url:?}: {error}"))
 }
 
+fn resolve_asset_request(document_url: &Url, request: &AssetRequest) -> Result<Url, String> {
+    let base = Url::parse(&request.base_url)
+        .or_else(|_| document_url.join(&request.base_url))
+        .map_err(|error| {
+            format!(
+                "invalid asset base URL {:?} for {:?}: {error}",
+                request.base_url, request.raw_url
+            )
+        })?;
+    base.join(&request.raw_url)
+        .map_err(|error| format!("invalid asset URL {:?}: {error}", request.raw_url))
+}
+
+fn trace_asset_requests(artifact: &DomArtifact, document_url: &Url) {
+    let total = artifact.asset_index.requests.len();
+    log::trace!(
+        target: "solara::assets",
+        "asset_batch document_url={} backend={} requests={} kinds={:?} external_css_loaded={} css_load_errors={:?} action=log-only no_fetch=1",
+        document_url,
+        artifact.asset_index.backend,
+        total,
+        artifact.asset_index.kind_counts,
+        artifact.style_index.external_stylesheet_count,
+        artifact.style_index.load_errors,
+    );
+    for (index, request) in artifact.asset_index.requests.iter().enumerate() {
+        match resolve_asset_request(document_url, request) {
+            Ok(resolved_url) => log::trace!(
+                target: "solara::assets",
+                "asset_request index={} total={} kind={} initiator={} tag={} attribute={} path={} media_type={:?} raw_url={:?} base_url={:?} resolved_url={} action={} no_fetch={}",
+                index + 1,
+                total,
+                request.kind,
+                request.initiator,
+                request.tag,
+                request.attribute,
+                request.path,
+                request.media_type,
+                request.raw_url,
+                request.base_url,
+                resolved_url,
+                if request.kind == "stylesheet" { "css-pipeline" } else { "log-only" },
+                if request.kind == "stylesheet" { 0 } else { 1 },
+            ),
+            Err(error) => log::trace!(
+                target: "solara::assets",
+                "asset_request index={} total={} kind={} initiator={} tag={} attribute={} path={} media_type={:?} raw_url={:?} base_url={:?} resolution_error={:?} action=log-only no_fetch=1",
+                index + 1,
+                total,
+                request.kind,
+                request.initiator,
+                request.tag,
+                request.attribute,
+                request.path,
+                request.media_type,
+                request.raw_url,
+                request.base_url,
+                error,
+            ),
+        }
+    }
+}
+
+fn find_element<'a>(node: &'a DomNode, tag: &str) -> Option<&'a DomNode> {
+    if node
+        .tag_name
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+    {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_element(child, tag))
+        .or_else(|| {
+            node.content
+                .as_deref()
+                .and_then(|content| find_element(content, tag))
+        })
+}
+
+/// Dormant legacy input path for Solara's preserved Stylo experiment.
+/// Active linked CSS now enters through `DomEngine` before artifact creation.
+#[allow(dead_code)]
+fn collect_stylesheets(node: &DomNode, base_url: &Url, css: &mut String) -> Result<(), String> {
+    match node.tag_name.as_deref() {
+        Some("style") => append_stylesheet(css, &raw_text_content(node)),
+        Some("link") if is_stylesheet(node) => {
+            let href = node
+                .attribute("href")
+                .expect("stylesheet link must have an href");
+            let stylesheet_url = base_url
+                .join(href)
+                .map_err(|error| format!("invalid stylesheet URL {href:?}: {error}"))?;
+            append_stylesheet(css, &fetch_text(&stylesheet_url)?);
+        }
+        _ => {}
+    }
+    for child in &node.children {
+        collect_stylesheets(child, base_url, css)?;
+    }
+    if let Some(content) = &node.content {
+        collect_stylesheets(content, base_url, css)?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn is_stylesheet(node: &DomNode) -> bool {
+    node.attribute("href").is_some()
+        && node.attribute("rel").is_some_and(|rel| {
+            rel.split_ascii_whitespace()
+                .any(|part| part.eq_ignore_ascii_case("stylesheet"))
+        })
+}
+
+fn raw_text_content(node: &DomNode) -> String {
+    let mut text = String::new();
+    append_raw_text(node, &mut text);
+    text
+}
+
+fn append_raw_text(node: &DomNode, text: &mut String) {
+    if let ("#text", Some(value)) = (node.node_name.as_str(), &node.value) {
+        text.push_str(value);
+    }
+    for child in &node.children {
+        append_raw_text(child, text);
+    }
+    if let Some(content) = &node.content {
+        append_raw_text(content, text);
+    }
+}
+
+#[allow(dead_code)]
 fn append_stylesheet(target: &mut String, stylesheet: &str) {
     if !target.is_empty() {
         target.push('\n');
@@ -122,6 +268,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use url::Url;
 
     use super::{DEFAULT_HTML_PATH, load_page, resolve_input};
 
@@ -135,14 +282,26 @@ mod tests {
         );
         assert_eq!(resolve_input(DEFAULT_HTML_PATH).unwrap().scheme(), "file");
         assert!(resolve_input("data:text/html,hello").is_err());
+        assert_eq!(
+            super::resolve_resource_url(
+                "https://example.com/docs/page.html",
+                Some("/assets/"),
+                "icons/site.png",
+            )
+            .unwrap()
+            .as_str(),
+            "https://example.com/assets/icons/site.png"
+        );
     }
 
     #[test]
-    fn loads_default_html_and_linked_css() {
+    fn loads_current_demo_through_parse5() {
         let page = load_page(None).unwrap();
-        assert!(page.html.contains("<selectedcontent>"));
-        assert!(page.css.contains("box-sizing: border-box"));
-        assert_eq!(page.title, "Complete HTML Element Catalog");
+        assert_eq!(page.title, "HTML Only Visual Elements");
+        assert!(page.favicon_url.is_none());
+        assert_eq!(page.artifact.schema, "rustqjsdom.artifact");
+        assert_eq!(page.artifact.schema_version, 2);
+        assert!(super::find_element(&page.artifact.document, "body").is_some());
     }
 
     #[test]
@@ -158,7 +317,7 @@ mod tests {
                 let body = if request.starts_with("GET /page.css ") {
                     "main { color: #123456; }"
                 } else {
-                    "<title>Remote</title><link rel='stylesheet' href='page.css'><main>Loaded</main>"
+                    "<title>Remote</title><link rel='icon' href='icons/site.png'><link rel='stylesheet' href='page.css'><main id='remote'>Loaded<img src='not-fetched.png'></main>"
                 };
                 write!(
                     stream,
@@ -173,6 +332,29 @@ mod tests {
         let page = load_page(Some(&format!("http://{address}/index.html"))).unwrap();
         server.join().unwrap();
         assert_eq!(page.title, "Remote");
-        assert!(page.css.contains("color: #123456"));
+        let expected_favicon = format!("http://{address}/icons/site.png");
+        assert_eq!(
+            page.favicon_url.as_ref().map(Url::as_str),
+            Some(expected_favicon.as_str())
+        );
+        let main = page
+            .artifact
+            .document
+            .find_element_by_id("remote")
+            .expect("remote main");
+        let style = page
+            .artifact
+            .style_index
+            .style(main.style_ref.expect("style ref"))
+            .expect("computed style");
+        assert_eq!(style.color.as_deref(), Some("#123456"));
+        assert_eq!(page.artifact.style_index.external_stylesheet_count, 1);
+        assert!(
+            page.artifact
+                .asset_index
+                .requests
+                .iter()
+                .any(|request| request.raw_url == "not-fetched.png")
+        );
     }
 }
