@@ -27,12 +27,10 @@ The project uses Rust 2024 edition.
 
 ## Quick Start
 
-Clone with the engine submodule, or initialize it in an existing checkout:
+Clone the repository:
 
 ```bash
-git clone --recurse-submodules https://github.com/t4ce/solara.git
-# Existing checkout:
-git submodule update --init --recursive
+git clone https://github.com/t4ce/solara.git
 ```
 
 Then run the following command from the project root:
@@ -78,7 +76,7 @@ The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its 
 │   ├── main.rs
 │   └── gpu_ui
 └── vendor
-    └── RustQJSDom (git submodule)
+    └── RustQJSDom
 ```
 
 ## Roadmap
@@ -91,4 +89,4 @@ The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its 
 
 ## License
 
-Solara is licensed under the [MIT License](LICENSE). The RustQJSDom submodule is a separately licensed component; see its own `LICENSE` and third-party notices after initializing the submodule.
+Solara is licensed under the [MIT License](LICENSE). The vendored RustQJSDom component retains its own license and third-party notices under `vendor/RustQJSDom`.

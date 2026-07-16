@@ -1,6 +1,6 @@
 # RustQJSDom engine handoff
 
-Solara pins RustQJSDom as the `vendor/RustQJSDom` git submodule. The dependency owns the embedded QuickJS runtime, loads the TrueSurfer DOM pipeline, and uses Parse5 to produce a typed, versioned `DomArtifact`.
+Solara owns RustQJSDom directly under `vendor/RustQJSDom`. The vendored crate owns the embedded QuickJS runtime, loads the TrueSurfer DOM pipeline, and uses Parse5 to produce a typed, versioned `DomArtifact`.
 
 ## Runtime boundary
 
@@ -43,27 +43,20 @@ The current `docs/demoui.html` is the integration fixture. Before removing `scra
 cargo test --locked
 ```
 
-## Submodule workflow
+## Vendored engine workflow
 
-Initialize a checkout with:
-
-```bash
-git submodule update --init --recursive
-```
-
-To test a newer engine revision, check out the intended commit inside `vendor/RustQJSDom`, run its proof suite, then run Solara's checks and commit the updated gitlink:
+Edit RustQJSDom directly inside the Solara repository. Prove the engine and then run Solara's checks before committing both sides together:
 
 ```bash
-git -C vendor/RustQJSDom checkout <commit>
 vendor/RustQJSDom/scripts/prove.sh
 cargo test --locked
 git add vendor/RustQJSDom Cargo.lock
 ```
 
-The relative submodule URL resolves beside the Solara repository on GitHub. RustQJSDom must be published at that location before a fresh remote clone can initialize it.
+A normal Solara clone contains the complete engine source; no submodule initialization or second repository is required.
 
 ## Packaging and licenses
 
-The Cargo dependency includes both a version and a local path. Local builds use the pinned submodule; a crates.io package resolves `rust-qjs-dom = 0.1.0` from the registry. Publish RustQJSDom before publishing a Solara release that contains this dependency.
+The Cargo dependency includes both a version and a local path. Repository builds use the vendored crate; a crates.io package resolves `rust-qjs-dom = 0.1.0` from the registry.
 
-Solara remains MIT licensed. RustQJSDom retains its own source-available license, and QuickJS retains its upstream license. The submodule's `LICENSE` and `THIRD_PARTY_NOTICES.md` are authoritative for that component.
+Solara remains MIT licensed. RustQJSDom retains its own source-available license, and QuickJS retains its upstream license. The vendored component's `LICENSE` and `THIRD_PARTY_NOTICES.md` are authoritative for that code.

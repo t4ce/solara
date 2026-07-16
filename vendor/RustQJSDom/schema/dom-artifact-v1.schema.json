@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/t4ce/RustQJSDom/schema/dom-artifact-v1.schema.json",
+  "title": "RustQJSDom artifact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schemaVersion",
+    "source",
+    "timings",
+    "document",
+    "widgetTree",
+    "widgetStats",
+    "extracted"
+  ],
+  "properties": {
+    "schema": { "const": "rustqjsdom.artifact" },
+    "schemaVersion": { "const": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "bytes", "lines"],
+      "properties": {
+        "url": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "lines": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "timings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parse5Ms", "totalMs"],
+      "properties": {
+        "parse5Ms": { "type": "integer", "minimum": 0 },
+        "totalMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "document": { "$ref": "#/$defs/node" },
+    "widgetTree": {},
+    "widgetStats": {
+      "type": "object",
+      "required": ["nodes", "widgets", "text", "complex", "interactive", "tags", "categories"],
+      "properties": {
+        "nodes": { "type": "integer", "minimum": 0 },
+        "widgets": { "type": "integer", "minimum": 0 },
+        "text": { "type": "integer", "minimum": 0 },
+        "complex": { "type": "integer", "minimum": 0 },
+        "interactive": { "type": "integer", "minimum": 0 },
+        "tags": { "$ref": "#/$defs/counts" },
+        "categories": { "$ref": "#/$defs/counts" }
+      }
+    },
+    "extracted": {
+      "type": "object",
+      "required": [
+        "title",
+        "faviconHref",
+        "shellHtml",
+        "bodyHtml",
+        "bodyHierarchy",
+        "bodyHierarchySummary",
+        "styleCount",
+        "styleBytes",
+        "scriptCount",
+        "scriptBytes",
+        "styles",
+        "scripts"
+      ],
+      "properties": {
+        "title": { "type": ["string", "null"] },
+        "faviconHref": { "type": ["string", "null"] },
+        "shellHtml": { "type": "string" },
+        "bodyHtml": { "type": "string" },
+        "bodyHierarchy": { "type": "array" },
+        "bodyHierarchySummary": { "type": "string" },
+        "styleCount": { "type": "integer", "minimum": 0 },
+        "styleBytes": { "type": "integer", "minimum": 0 },
+        "scriptCount": { "type": "integer", "minimum": 0 },
+        "scriptBytes": { "type": "integer", "minimum": 0 },
+        "styles": { "type": "array" },
+        "scripts": { "type": "array" }
+      }
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "namespace": { "type": "string" },
+        "prefix": { "type": "string" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeName"],
+      "properties": {
+        "nodeName": { "type": "string" },
+        "tagName": { "type": "string" },
+        "namespaceURI": { "type": "string" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/attribute" } },
+        "value": { "type": "string" },
+        "data": { "type": "string" },
+        "name": { "type": "string" },
+        "publicId": { "type": "string" },
+        "systemId": { "type": "string" },
+        "mode": { "type": "string" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "content": { "$ref": "#/$defs/node" }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/t4ce/RustQJSDom/schema/dom-artifact-v2.schema.json",
+  "title": "RustQJSDom artifact v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schemaVersion",
+    "source",
+    "timings",
+    "document",
+    "styleIndex",
+    "assetIndex",
+    "widgetTree",
+    "widgetStats",
+    "extracted"
+  ],
+  "properties": {
+    "schema": { "const": "rustqjsdom.artifact" },
+    "schemaVersion": { "const": 2 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "bytes", "lines"],
+      "properties": {
+        "url": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "lines": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "timings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parse5Ms", "lightningCssMs", "totalMs"],
+      "properties": {
+        "parse5Ms": { "type": "integer", "minimum": 0 },
+        "lightningCssMs": { "type": "integer", "minimum": 0 },
+        "totalMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "document": { "$ref": "#/$defs/node" },
+    "styleIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "styleTable",
+        "nodeStyleRefs",
+        "styleSlotCount",
+        "nodeRefCount",
+        "inlineStyleCount",
+        "stylesheetCount",
+        "externalStylesheetCount",
+        "ruleCount",
+        "elementCount",
+        "warnings",
+        "loadErrors",
+        "summary"
+      ],
+      "properties": {
+        "backend": { "const": "lightningcss@1.0.0-alpha.70" },
+        "styleTable": { "type": "array", "items": { "$ref": "#/$defs/computedStyle" } },
+        "nodeStyleRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "styleRef"],
+            "properties": {
+              "path": { "type": "string" },
+              "styleRef": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "styleSlotCount": { "type": "integer", "minimum": 0 },
+        "nodeRefCount": { "type": "integer", "minimum": 0 },
+        "inlineStyleCount": { "type": "integer", "minimum": 0 },
+        "stylesheetCount": { "type": "integer", "minimum": 0 },
+        "externalStylesheetCount": { "type": "integer", "minimum": 0 },
+        "ruleCount": { "type": "integer", "minimum": 0 },
+        "elementCount": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "loadErrors": { "type": "array", "items": { "type": "string" } },
+        "summary": { "type": "string" }
+      }
+    },
+    "assetIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "baseHref", "requests", "requestCount", "kindCounts"],
+      "properties": {
+        "backend": { "const": "truesurfer-assets@1" },
+        "baseHref": { "type": ["string", "null"] },
+        "requests": { "type": "array", "items": { "$ref": "#/$defs/assetRequest" } },
+        "requestCount": { "type": "integer", "minimum": 0 },
+        "kindCounts": { "$ref": "#/$defs/counts" }
+      }
+    },
+    "widgetTree": {},
+    "widgetStats": {
+      "type": "object",
+      "required": ["nodes", "widgets", "text", "complex", "interactive", "tags", "categories"],
+      "properties": {
+        "nodes": { "type": "integer", "minimum": 0 },
+        "widgets": { "type": "integer", "minimum": 0 },
+        "text": { "type": "integer", "minimum": 0 },
+        "complex": { "type": "integer", "minimum": 0 },
+        "interactive": { "type": "integer", "minimum": 0 },
+        "tags": { "$ref": "#/$defs/counts" },
+        "categories": { "$ref": "#/$defs/counts" }
+      }
+    },
+    "extracted": {
+      "type": "object",
+      "required": [
+        "title",
+        "faviconHref",
+        "shellHtml",
+        "bodyHtml",
+        "bodyHierarchy",
+        "bodyHierarchySummary",
+        "styleCount",
+        "styleBytes",
+        "scriptCount",
+        "scriptBytes",
+        "styles",
+        "scripts"
+      ],
+      "properties": {
+        "title": { "type": ["string", "null"] },
+        "faviconHref": { "type": ["string", "null"] },
+        "shellHtml": { "type": "string" },
+        "bodyHtml": { "type": "string" },
+        "bodyHierarchy": { "type": "array" },
+        "bodyHierarchySummary": { "type": "string" },
+        "styleCount": { "type": "integer", "minimum": 0 },
+        "styleBytes": { "type": "integer", "minimum": 0 },
+        "scriptCount": { "type": "integer", "minimum": 0 },
+        "scriptBytes": { "type": "integer", "minimum": 0 },
+        "styles": { "type": "array" },
+        "scripts": { "type": "array" }
+      }
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "namespace": { "type": "string" },
+        "prefix": { "type": "string" }
+      }
+    },
+    "computedStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoredProperties",
+        "display",
+        "color",
+        "backgroundColor",
+        "fontSizePx",
+        "lineHeightPx",
+        "fontWeight",
+        "fontStyle",
+        "textAlign",
+        "whiteSpace",
+        "marginLeftPx",
+        "marginTopPx",
+        "marginRightPx",
+        "marginBottomPx",
+        "paddingLeftPx",
+        "paddingTopPx",
+        "paddingRightPx",
+        "paddingBottomPx",
+        "borderWidthPx",
+        "borderColor"
+      ],
+      "properties": {
+        "authoredProperties": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "display": { "type": ["string", "null"] },
+        "color": { "type": ["string", "null"] },
+        "backgroundColor": { "type": ["string", "null"] },
+        "fontSizePx": { "type": ["number", "null"] },
+        "lineHeightPx": { "type": ["number", "null"] },
+        "fontWeight": { "type": ["string", "null"] },
+        "fontStyle": { "type": ["string", "null"] },
+        "textAlign": { "type": ["string", "null"] },
+        "whiteSpace": { "type": ["string", "null"] },
+        "marginLeftPx": { "type": ["number", "null"] },
+        "marginTopPx": { "type": ["number", "null"] },
+        "marginRightPx": { "type": ["number", "null"] },
+        "marginBottomPx": { "type": ["number", "null"] },
+        "paddingLeftPx": { "type": ["number", "null"] },
+        "paddingTopPx": { "type": ["number", "null"] },
+        "paddingRightPx": { "type": ["number", "null"] },
+        "paddingBottomPx": { "type": ["number", "null"] },
+        "borderWidthPx": { "type": ["number", "null"] },
+        "borderColor": { "type": ["string", "null"] }
+      }
+    },
+    "assetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "tag", "attribute", "rawUrl", "baseUrl", "kind", "initiator", "mediaType"],
+      "properties": {
+        "path": { "type": "string" },
+        "tag": { "type": "string" },
+        "attribute": { "type": "string" },
+        "rawUrl": { "type": "string", "minLength": 1 },
+        "baseUrl": { "type": "string" },
+        "kind": { "type": "string", "minLength": 1 },
+        "initiator": { "type": "string", "minLength": 1 },
+        "mediaType": { "type": "string" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeName"],
+      "properties": {
+        "nodeName": { "type": "string" },
+        "tagName": { "type": "string" },
+        "namespaceURI": { "type": "string" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/attribute" } },
+        "value": { "type": "string" },
+        "data": { "type": "string" },
+        "name": { "type": "string" },
+        "publicId": { "type": "string" },
+        "systemId": { "type": "string" },
+        "mode": { "type": "string" },
+        "styleRef": { "type": "integer", "minimum": 0 },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "content": { "$ref": "#/$defs/node" }
+      }
+    }
+  }
+}
