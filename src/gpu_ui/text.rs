@@ -215,9 +215,10 @@ pub fn metrics(font_size: f32) -> FontMetrics {
         } else {
             0.0
         };
-        // Solara's bundled layout font is monospace. UI4 owns the actual
-        // outlines; these em-relative values keep DOM wrapping independent
-        // of the WGPU shim while preserving the CSS pixel coordinate space.
+        // Solara's bundled layout face is Inconsolata. UI4 owns the actual
+        // outlines but selects that same face at paint time; these em-relative
+        // values keep DOM wrapping independent of the WGPU shim while
+        // preserving the CSS pixel coordinate space.
         FontMetrics {
             font_size,
             glyph_scale: font_size,

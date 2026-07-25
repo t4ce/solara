@@ -1,22 +1,79 @@
 //! TRUEOS Blueprint entry point for Solara's text-only UI4 experiment.
 
-use trueos::ui4_solara_text::{self, Damage, Error, Font, Frame, SceneTextRow};
+use trueos::ui4_solara_text::{
+    self, CursorSource, Damage, Error, Font, Frame, PanPhase, SceneTextRow,
+};
 
 const FRAME_WIDTH: u32 = 960;
 const FRAME_HEIGHT: u32 = 720;
+const RENDER_ONCE_ARG: &str = "--trueos-render-once";
+const HTML_TAG_ARG: &str = "--trueos-html-tag";
+const SOURCE_URL_ARG: &str = "--trueos-source-url";
+const HANDOFF_ROOT: &str = "/common/solara/surf";
+const INPUT_POLL_MS: u64 = 8;
+// Solara lays out every current text run with the same monospaced metrics as
+// its bundled desktop face. Keep the UI4 scene on that face as well instead
+// of repainting those coordinates with the proportional legacy default.
+const SCENE_FONT: Font = Font::Inconsolata;
 
-pub(crate) fn run() -> ! {
-    match present_text_frame() {
-        Ok(_frame) => {
-            trueos::vsys::write_out(
-                b"solara: DOM text scene published to UI4; keeping Blueprint resident\n",
-            );
-            loop {
-                trueos::vsys::sleep_ms(250);
+struct RenderDocument {
+    source: Option<String>,
+    source_url: String,
+    handoff_path: Option<String>,
+}
+
+struct SolaraView {
+    frame: Frame,
+    document: crate::gpu_ui::Ui4TextDocument,
+    active_pan_source: Option<CursorSource>,
+}
+
+impl SolaraView {
+    fn paint(&mut self) -> Result<usize, Error> {
+        let Self {
+            frame, document, ..
+        } = self;
+        paint_text_frame(frame, document.rebuild_text())
+    }
+
+    fn take_pan_updates(&mut self) -> Result<bool, Error> {
+        let mut changed = false;
+        while let Some(event) = self.frame.take_pan_event()? {
+            match event.phase {
+                PanPhase::Begin => self.active_pan_source = Some(event.source),
+                PanPhase::Update if self.active_pan_source == Some(event.source) => {
+                    // Solara's current layout is vertical. UI4 still reports
+                    // both axes, but horizontal movement is deliberately left
+                    // for a future wide-layout viewport.
+                    changed |= self.document.pan_vertical(event.dy, FRAME_HEIGHT as f32);
+                }
+                PanPhase::End if self.active_pan_source == Some(event.source) => {
+                    self.active_pan_source = None;
+                    let message = format!(
+                        "solara: pan ended window={} scroll_y={:.1}\n",
+                        self.frame.window_id(),
+                        self.document.scroll_y(),
+                    );
+                    trueos::vsys::write_out(message.as_bytes());
+                }
+                _ => {}
             }
         }
-        Err(_) => {
-            trueos::vsys::write_err(b"solara: UI4 text-row frame failed\n");
+        Ok(changed)
+    }
+}
+
+pub(crate) fn run() -> ! {
+    match trueos::async_fs::block_on(present_text_frame()) {
+        Ok(view) => {
+            trueos::vsys::write_out(
+                b"solara: DOM text scene published to UI4; middle-drag vertical pan active\n",
+            );
+            resident_view_loop(view)
+        }
+        Err(error) => {
+            let message = format!("solara: UI4 text-row frame failed: {error:?}\n");
+            trueos::vsys::write_err(message.as_bytes());
             loop {
                 trueos::vsys::sleep_ms(250);
             }
@@ -24,21 +81,84 @@ pub(crate) fn run() -> ! {
     }
 }
 
-fn present_text_frame() -> Result<Frame, Error> {
-    let supported = ui4_solara_text::font_sizes()?;
-    let required_extent = FRAME_WIDTH.max(FRAME_HEIGHT);
-    supported
-        .iter()
-        .any(|size| size.target_pixels >= required_extent)
-        .then_some(())
-        .ok_or(Error::Font)?;
+fn resident_view_loop(mut view: SolaraView) -> ! {
+    let mut dirty = false;
+    loop {
+        match view.take_pan_updates() {
+            Ok(changed) => dirty |= changed,
+            Err(error) => {
+                let message = format!("solara: UI4 pan input failed: {error:?}\n");
+                trueos::vsys::write_err(message.as_bytes());
+            }
+        }
+        if dirty {
+            match view.paint() {
+                Ok(_) => dirty = false,
+                Err(Error::Busy) => {}
+                Err(error) => {
+                    let message = format!("solara: pan repaint failed: {error:?}\n");
+                    trueos::vsys::write_err(message.as_bytes());
+                    dirty = false;
+                }
+            }
+        }
+        trueos::vsys::sleep_ms(INPUT_POLL_MS);
+    }
+}
 
-    let text = crate::gpu_ui::embedded_text_batch(FRAME_WIDTH as f32).map_err(|error| {
+async fn present_text_frame() -> Result<SolaraView, Error> {
+    // Scene text renders into the fixed viewport with a per-row font size. It
+    // does not require the legacy square stamp target to cover the viewport.
+    if ui4_solara_text::font_sizes()?.is_empty() {
+        return Err(Error::Font);
+    }
+
+    let document = render_document().await?;
+    let ui4_document = match document.source.as_deref() {
+        Some(source) => crate::gpu_ui::ui4_document_for_html(
+            source,
+            document.source_url.as_str(),
+            FRAME_WIDTH as f32,
+        ),
+        None => crate::gpu_ui::embedded_ui4_document(FRAME_WIDTH as f32),
+    }
+    .map_err(|error| {
         trueos::vsys::write_err(b"solara: DOM scene build failed: ");
         trueos::vsys::write_err(error.as_bytes());
         trueos::vsys::write_err(b"\n");
         Error::Invalid
     })?;
+    let mut view = SolaraView {
+        frame: Frame::open(160, 180, FRAME_WIDTH, FRAME_HEIGHT)?,
+        document: ui4_document,
+        active_pan_source: None,
+    };
+    let visible_rows = view.paint()?;
+    if let Some(path) = document.handoff_path.as_deref() {
+        match trueos::async_fs::remove(path.as_bytes()).await {
+            Ok(()) => {
+                let message = format!("solara: consumed one-shot HTML handoff {path}\n");
+                trueos::vsys::write_out(message.as_bytes());
+            }
+            Err(code) => {
+                let message = format!("solara: could not consume HTML handoff {path}: {code}\n");
+                trueos::vsys::write_err(message.as_bytes());
+            }
+        }
+    }
+    let summary = format!(
+        "solara: scene rows={} viewport={}x{} content_height={:.1} source={}\n",
+        visible_rows,
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+        view.document.content_height(),
+        document.source_url,
+    );
+    trueos::vsys::write_out(summary.as_bytes());
+    Ok(view)
+}
+
+fn paint_text_frame(frame: &mut Frame, text: &crate::gpu_ui::Ui4TextBatch) -> Result<usize, Error> {
     let mut color_groups: Vec<(u32, Vec<SceneTextRow<'_>>)> = Vec::new();
     for section in &text.sections {
         let color = packed_color(section.color);
@@ -58,23 +178,94 @@ fn present_text_frame() -> Result<Frame, Error> {
         }
     }
 
-    let mut frame = Frame::open(160, 180, FRAME_WIDTH, FRAME_HEIGHT)?;
     frame.begin(ui4_solara_text::rgba(250, 250, 250, 255))?;
     for (color, rows) in &color_groups {
         for chunk in rows.chunks(ui4_solara_text::MAX_SCENE_TEXT_ROWS_PER_CALL) {
-            frame.draw_text_scene(Font::Default, (FRAME_WIDTH, FRAME_HEIGHT), *color, chunk)?;
+            frame.draw_text_scene(SCENE_FONT, (FRAME_WIDTH, FRAME_HEIGHT), *color, chunk)?;
         }
     }
     frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))?;
-    let summary = format!(
-        "solara: scene rows={} color_passes={} viewport={}x{}\n",
-        text.sections.len(),
-        color_groups.len(),
-        FRAME_WIDTH,
-        FRAME_HEIGHT,
+    Ok(text.sections.len())
+}
+
+async fn render_document() -> Result<RenderDocument, Error> {
+    let mut render_once = false;
+    let mut html_tag = None;
+    let mut source_url = None;
+    let mut args = trueos::env::args();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            RENDER_ONCE_ARG => render_once = true,
+            HTML_TAG_ARG => {
+                html_tag = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_startup("missing value after --trueos-html-tag"))?,
+                );
+            }
+            SOURCE_URL_ARG => {
+                source_url =
+                    Some(args.next().ok_or_else(|| {
+                        invalid_startup("missing value after --trueos-source-url")
+                    })?);
+            }
+            _ => {}
+        }
+    }
+
+    if !render_once && html_tag.is_none() {
+        return Ok(RenderDocument {
+            source: None,
+            source_url: String::from("trueos://solara/docs/demoui.html"),
+            handoff_path: None,
+        });
+    }
+    if !render_once {
+        return Err(invalid_startup(
+            "HTML handoff tag requires --trueos-render-once",
+        ));
+    }
+    let tag = html_tag
+        .ok_or_else(|| invalid_startup("--trueos-render-once requires --trueos-html-tag"))?;
+    if !valid_handoff_tag(tag.as_str()) {
+        return Err(invalid_startup("invalid --trueos-html-tag value"));
+    }
+
+    let path = format!("{HANDOFF_ROOT}/{tag}.html");
+    let source = trueos::async_fs::read_file_utf8(path.as_bytes())
+        .await
+        .map_err(|code| {
+            let message = format!("solara: HTML handoff read failed path={path} code={code}\n");
+            trueos::vsys::write_err(message.as_bytes());
+            Error::Invalid
+        })?;
+    let source_url = source_url.unwrap_or_else(|| format!("trueos://shell2/surf/{tag}"));
+    let message = format!(
+        "solara: accepted one-shot HTML handoff tag={tag} bytes={} source={}\n",
+        source.len(),
+        source_url,
     );
-    trueos::vsys::write_out(summary.as_bytes());
-    Ok(frame)
+    trueos::vsys::write_out(message.as_bytes());
+
+    Ok(RenderDocument {
+        source: Some(source),
+        source_url,
+        handoff_path: Some(path),
+    })
+}
+
+fn valid_handoff_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 64
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn invalid_startup(reason: &str) -> Error {
+    trueos::vsys::write_err(b"solara: invalid render request: ");
+    trueos::vsys::write_err(reason.as_bytes());
+    trueos::vsys::write_err(b"\n");
+    Error::Invalid
 }
 
 fn packed_color(color: [f32; 4]) -> u32 {

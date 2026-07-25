@@ -72,6 +72,10 @@ and `line-height` values—including inherited sizes, heading defaults, relative
 glyph run. This is an upfront, single-scene calculation; it does not add font
 animation or a retained animation pass.
 
+Solara currently uses Inconsolata as its single layout face. Both the desktop
+WGPU renderer and the TRUEOS UI4 text scene paint with that same face, so the
+monospaced advances used for wrapping remain identical across backends.
+
 ## Project Structure
 
 ```text
