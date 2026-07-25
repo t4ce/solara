@@ -14,8 +14,9 @@ mod shapes;
 mod text;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) use text::TextBatch as Ui4TextBatch;
+pub(crate) use text::{TextBatch as Ui4TextBatch, char_width as ui4_char_width};
 
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
 fn clamped_vertical_pan(
     scroll_y: f32,
     drag_dy: i32,

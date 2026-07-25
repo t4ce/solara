@@ -11,6 +11,8 @@ const HTML_TAG_ARG: &str = "--trueos-html-tag";
 const SOURCE_URL_ARG: &str = "--trueos-source-url";
 const HANDOFF_ROOT: &str = "/common/solara/surf";
 const INPUT_POLL_MS: u64 = 8;
+const RETAINED_TEXT_FRAGMENT_CHARS: usize = 8;
+const RETAINED_TEXT_RUNS_PER_CALL: usize = 4;
 // Solara lays out every current text run with the same monospaced metrics as
 // its bundled desktop face. Keep the UI4 scene on that face as well instead
 // of repainting those coordinates with the proportional legacy default.
@@ -108,11 +110,7 @@ fn resident_view_loop(mut view: SolaraView) -> ! {
 
 async fn present_text_frame() -> Result<SolaraView, Error> {
     // Scene text renders into the fixed viewport with a per-row font size. It
-    // does not require the legacy square stamp target to cover the viewport.
-    if ui4_solara_text::font_sizes()?.is_empty() {
-        return Err(Error::Font);
-    }
-
+    // does not require FontKernelOld's square stamp target to cover the viewport.
     let document = render_document().await?;
     let ui4_document = match document.source.as_deref() {
         Some(source) => crate::gpu_ui::ui4_document_for_html(
@@ -159,30 +157,51 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
 }
 
 fn paint_text_frame(frame: &mut Frame, text: &crate::gpu_ui::Ui4TextBatch) -> Result<usize, Error> {
-    let mut color_groups: Vec<(u32, Vec<SceneTextRow<'_>>)> = Vec::new();
+    #[derive(Clone)]
+    struct OwnedSceneTextRow {
+        text: String,
+        x: f32,
+        y: f32,
+        font_pixels: f32,
+    }
+
+    let mut retained_scenes: Vec<(u32, Vec<OwnedSceneTextRow>)> = Vec::new();
     for section in &text.sections {
         let color = packed_color(section.color);
-        let row = SceneTextRow {
-            text: section.text.as_str(),
-            x: section.x,
-            y: section.y,
-            font_pixels: section.font_size,
-        };
-        if let Some((_, rows)) = color_groups
-            .iter_mut()
-            .find(|(group_color, _)| *group_color == color)
-        {
-            rows.push(row);
-        } else {
-            color_groups.push((color, vec![row]));
+        let advance = crate::gpu_ui::ui4_char_width(section.font_size);
+        let characters = section.text.chars().collect::<Vec<_>>();
+        let fragments = characters
+            .chunks(RETAINED_TEXT_FRAGMENT_CHARS)
+            .enumerate()
+            .map(|(fragment_index, fragment)| OwnedSceneTextRow {
+                text: fragment.iter().collect(),
+                x: section.x + (fragment_index * RETAINED_TEXT_FRAGMENT_CHARS) as f32 * advance,
+                y: section.y,
+                font_pixels: section.font_size,
+            })
+            .collect::<Vec<_>>();
+        for chunk in fragments.chunks(RETAINED_TEXT_RUNS_PER_CALL) {
+            retained_scenes.push((color, chunk.to_vec()));
         }
     }
 
     frame.begin(ui4_solara_text::rgba(250, 250, 250, 255))?;
-    for (color, rows) in &color_groups {
-        for chunk in rows.chunks(ui4_solara_text::MAX_SCENE_TEXT_ROWS_PER_CALL) {
-            frame.draw_text_scene(SCENE_FONT, (FRAME_WIDTH, FRAME_HEIGHT), *color, chunk)?;
-        }
+    for (color, rows) in &retained_scenes {
+        let borrowed = rows
+            .iter()
+            .map(|row| SceneTextRow {
+                text: row.text.as_str(),
+                x: row.x,
+                y: row.y,
+                font_pixels: row.font_pixels,
+            })
+            .collect::<Vec<_>>();
+        frame.retain_text_scene(
+            SCENE_FONT,
+            (FRAME_WIDTH, FRAME_HEIGHT),
+            *color,
+            borrowed.as_slice(),
+        )?;
     }
     frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))?;
     Ok(text.sections.len())
