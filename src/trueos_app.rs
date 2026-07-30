@@ -1,6 +1,8 @@
 //! TRUEOS Blueprint entry point for Solara's text-only UI4 experiment.
 
-use trueos::ui4_solara_text::{self, CursorSource, Error, Font, Frame, PanPhase, SceneTextRow};
+use trueos::ui4_solara_text::{
+    self, CursorSource, Damage, Error, Font, FontCanvasRow, Frame, PanPhase,
+};
 
 const FRAME_WIDTH: u32 = 960;
 const FRAME_HEIGHT: u32 = 720;
@@ -10,7 +12,7 @@ const SOURCE_URL_ARG: &str = "--trueos-source-url";
 const HANDOFF_ROOT: &str = "/common/solara/surf";
 const INPUT_POLL_MS: u64 = 8;
 const PRESENT_RETRY_MS: u64 = 2;
-const TEXT_ROWS_PER_CALL: usize = 64;
+const FONT_CANVAS_MAX_ROWS: usize = 256;
 const TEXT_ROW_MAX_BYTES: usize = 1_024;
 const TEXT_BACKBUFFER_MAX_EXTENT: u32 = 4_096;
 const TEXT_BACKBUFFER_MAX_GLYPHS: usize = 4_096;
@@ -35,8 +37,7 @@ struct SolaraView {
 
 impl SolaraView {
     fn present_viewport(&mut self) -> Result<(), Error> {
-        self.frame.begin_sprite_frame(BACKGROUND_RGBA)?;
-        publish_text_backbuffer_view(
+        present_font_canvas_view(
             &mut self.frame,
             self.canvas,
             (0, self.document.scroll_y().round() as u32),
@@ -77,7 +78,7 @@ pub(crate) fn run() -> ! {
     match trueos::async_fs::block_on(present_text_frame()) {
         Ok(view) => {
             trueos::vsys::write_out(
-                b"solara: DOM text backbuffer published to UI4; middle-drag crop pan active\n",
+                b"solara: DOM text published as one retained RGBA8 font canvas; middle-drag crop pan active\n",
             );
             resident_view_loop(view)
         }
@@ -139,7 +140,7 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         active_pan_source: None,
     };
     let text = view.document.rebuild_text();
-    let scene_rows = build_text_backbuffer(&mut view.frame, view.canvas, text)?;
+    let scene_rows = build_font_canvas(&mut view.frame, view.canvas, text)?;
     if let Some(path) = document.handoff_path.as_deref() {
         match trueos::async_fs::remove(path.as_bytes()).await {
             Ok(()) => {
@@ -153,7 +154,7 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         }
     }
     let summary = format!(
-        "solara: scene rows={} viewport={}x{} backbuffer={}x{} content_height={:.1} source={}\n",
+        "solara: scene rows={} viewport={}x{} font_canvas={}x{} content_height={:.1} source={}\n",
         scene_rows,
         FRAME_WIDTH,
         FRAME_HEIGHT,
@@ -166,17 +167,18 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
     Ok(view)
 }
 
-fn build_text_backbuffer(
+fn build_font_canvas(
     frame: &mut Frame,
     canvas: (u32, u32),
     text: &crate::gpu_ui::Ui4TextBatch,
 ) -> Result<usize, Error> {
     #[derive(Clone)]
-    struct OwnedSceneTextRow {
+    struct OwnedFontCanvasRow {
         text: String,
         x: f32,
         y: f32,
         font_pixels: f32,
+        color_rgba: u32,
     }
 
     let glyphs = text
@@ -193,7 +195,7 @@ fn build_text_backbuffer(
         return Err(Error::Invalid);
     }
 
-    let mut retained_scenes: Vec<(u32, Vec<OwnedSceneTextRow>)> = Vec::new();
+    let mut rows = Vec::<OwnedFontCanvasRow>::new();
     for section in &text.sections {
         let color = packed_color(section.color);
         let advance = crate::gpu_ui::ui4_char_width(section.font_size);
@@ -208,48 +210,51 @@ fn build_text_backbuffer(
                 return Err(Error::Invalid);
             }
             let fragment = &section.text[byte_start..byte_end];
-            let row = OwnedSceneTextRow {
+            rows.push(OwnedFontCanvasRow {
                 text: fragment.to_string(),
                 x: section.x + character_start as f32 * advance,
                 y: section.y,
                 font_pixels: section.font_size,
-            };
-            if let Some((_, rows)) = retained_scenes.iter_mut().find(|(existing_color, rows)| {
-                *existing_color == color && rows.len() < TEXT_ROWS_PER_CALL
-            }) {
-                rows.push(row);
-            } else {
-                retained_scenes.push((color, vec![row]));
-            }
+                color_rgba: color,
+            });
             character_start += fragment.chars().count();
             byte_start = byte_end;
         }
     }
-
-    frame.begin_sprite_frame(BACKGROUND_RGBA)?;
-    for (color, rows) in &retained_scenes {
-        let borrowed = rows
-            .iter()
-            .map(|row| SceneTextRow {
-                text: row.text.as_str(),
-                x: row.x,
-                y: row.y,
-                font_pixels: row.font_pixels,
-            })
-            .collect::<Vec<_>>();
-        frame.retain_text_backbuffer(SCENE_FONT, canvas, *color, borrowed.as_slice())?;
+    if rows.len() > FONT_CANVAS_MAX_ROWS {
+        let message = format!(
+            "solara: font canvas exceeds {} row softcap after UTF-8 splitting: {}\n",
+            FONT_CANVAS_MAX_ROWS,
+            rows.len(),
+        );
+        trueos::vsys::write_err(message.as_bytes());
+        return Err(Error::Invalid);
     }
-    publish_text_backbuffer_view(frame, canvas, (0, 0))?;
-    Ok(text.sections.len())
+
+    let borrowed = rows
+        .iter()
+        .map(|row| FontCanvasRow {
+            text: row.text.as_str(),
+            x: row.x,
+            y: row.y,
+            font_pixels: row.font_pixels,
+            color_rgba: row.color_rgba,
+        })
+        .collect::<Vec<_>>();
+    frame.retain_font_canvas(SCENE_FONT, canvas, borrowed.as_slice())?;
+    present_font_canvas_view(frame, canvas, (0, 0))?;
+    Ok(rows.len())
 }
 
-fn publish_text_backbuffer_view(
+fn present_font_canvas_view(
     frame: &mut Frame,
     canvas: (u32, u32),
     origin: (u32, u32),
 ) -> Result<(), Error> {
+    frame.begin_sprite_frame(BACKGROUND_RGBA)?;
+    frame.draw_font_canvas_view(canvas, origin)?;
     loop {
-        match frame.publish_text_backbuffer_view(canvas, origin) {
+        match frame.publish(Damage::full(frame.width(), frame.height())) {
             Err(Error::Busy) => trueos::vsys::sleep_ms(PRESENT_RETRY_MS),
             result => return result,
         }
