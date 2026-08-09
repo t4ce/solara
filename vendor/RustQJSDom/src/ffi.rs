@@ -64,6 +64,9 @@ pub(crate) type JSModuleLoaderFunc = unsafe extern "C" fn(
     opaque: *mut c_void,
 ) -> *mut JSModuleDef;
 
+pub(crate) type JSInterruptHandler =
+    unsafe extern "C" fn(runtime: *mut JSRuntime, opaque: *mut c_void) -> c_int;
+
 unsafe extern "C" {
     pub(crate) fn JS_NewRuntime() -> *mut JSRuntime;
     pub(crate) fn JS_FreeRuntime(rt: *mut JSRuntime);
@@ -73,6 +76,11 @@ unsafe extern "C" {
     pub(crate) fn JS_SetContextOpaque(ctx: *mut JSContext, opaque: *mut c_void);
     pub(crate) fn JS_SetMemoryLimit(rt: *mut JSRuntime, limit: usize);
     pub(crate) fn JS_SetMaxStackSize(rt: *mut JSRuntime, stack_size: usize);
+    pub(crate) fn JS_SetInterruptHandler(
+        rt: *mut JSRuntime,
+        callback: Option<JSInterruptHandler>,
+        opaque: *mut c_void,
+    );
     pub(crate) fn JS_SetModuleLoaderFunc(
         rt: *mut JSRuntime,
         module_normalize: Option<JSModuleNormalizeFunc>,

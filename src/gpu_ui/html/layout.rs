@@ -76,6 +76,7 @@ fn layout_node(
     inherited: Option<LayoutStyle>,
 ) {
     let text_style = LayoutStyle::for_node(style_index, node, inherited);
+    let is_open = node.open;
     node.bounds = match &mut node.kind {
         ElementKind::Element { tag, children } => {
             if tag.is_metadata() || matches!(tag, HtmlTag::Head) {
@@ -119,7 +120,10 @@ fn layout_node(
                 }
             }
         },
-        ElementKind::Select { .. } => ctx.place_block(CONTROL_H),
+        ElementKind::Select { options, .. } => {
+            let rows = if is_open { options.len() + 1 } else { 1 };
+            ctx.place_block(CONTROL_H * rows as f32)
+        }
         ElementKind::Textarea { rows, .. } => {
             ctx.place_block(*rows as f32 * text_style.line_height + 8.0)
         }
@@ -158,6 +162,14 @@ fn layout_node(
             Some(text_style),
         ),
         ElementKind::Image { height, .. } => ctx.place_block(*height + 8.0),
+        ElementKind::Video { width, height } => {
+            let intrinsic_width = width.max(1.0);
+            let display_width = intrinsic_width.min(ctx.content_width()).max(1.0);
+            let display_height = display_width * height.max(1.0) / intrinsic_width;
+            let mut rect = ctx.place_block(display_height);
+            rect.width = display_width;
+            rect
+        }
         ElementKind::Dialog { children, floating } => {
             if *floating {
                 layout_floating_dialog(children, ctx, style_index, Some(text_style))
@@ -235,12 +247,7 @@ fn layout_control_in_row(
             node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, w, CONTROL_H);
         }
         ElementKind::Select { .. } => {
-            node.bounds = Rect::new(
-                x,
-                y + (row_h - CONTROL_H) * 0.5,
-                max_w.min(200.0),
-                CONTROL_H,
-            );
+            node.bounds = Rect::new(x, y + (row_h - CONTROL_H) * 0.5, max_w.min(280.0), row_h);
         }
         _ => {
             node.bounds = Rect::new(x, y, max_w, row_h);

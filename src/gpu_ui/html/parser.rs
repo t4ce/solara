@@ -43,6 +43,7 @@ impl NodeParser<'_> {
         let kind = match tag_name {
             "hr" => ElementKind::HorizontalRule,
             "input" => self.parse_input(element),
+            "select" => self.parse_select(element),
             "textarea" => ElementKind::Textarea {
                 name: attribute(element, "name"),
                 value: text_content(element),
@@ -56,6 +57,10 @@ impl NodeParser<'_> {
                 width: number_attribute(element, "width", 240.0),
                 height: number_attribute(element, "height", 160.0),
                 alt: attribute(element, "alt"),
+            },
+            "video" => ElementKind::Video {
+                width: number_attribute(element, "width", 640.0),
+                height: number_attribute(element, "height", 360.0),
             },
             "iframe" => {
                 let iframe_children = match element.attribute("srcdoc") {
@@ -171,6 +176,22 @@ impl NodeParser<'_> {
             checked: element.attribute("checked").is_some(),
             label: None,
         }
+    }
+
+    fn parse_select(&self, element: &DomNode) -> ElementKind {
+        let mut options = Vec::new();
+        let mut selected = 0;
+        for option in element
+            .children
+            .iter()
+            .filter(|child| child.tag_name.as_deref() == Some("option"))
+        {
+            if option.attribute("selected").is_some() {
+                selected = options.len();
+            }
+            options.push(text_content(option));
+        }
+        ElementKind::Select { options, selected }
     }
 
     fn parse_svg(&self, element: &DomNode) -> ElementKind {
@@ -348,6 +369,16 @@ mod tests {
             dialog.kind,
             ElementKind::Dialog { floating: true, .. }
         ));
+    }
+
+    #[test]
+    fn specializes_a_video_with_its_intrinsic_aspect_ratio() {
+        let nodes = parse_source("<video width='1920' height='1080'></video>");
+        let video = find_tag(&nodes, "video").expect("video is present");
+        let ElementKind::Video { width, height } = &video.kind else {
+            panic!("expected specialized video");
+        };
+        assert_eq!((*width, *height), (1920.0, 1080.0));
     }
 
     fn collect_tags<'a>(nodes: &'a [HtmlNode], tags: &mut Vec<&'a str>) {

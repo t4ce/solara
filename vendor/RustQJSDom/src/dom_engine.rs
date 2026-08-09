@@ -268,4 +268,17 @@ mod tests {
             serde_json::json!(false)
         );
     }
+
+    #[test]
+    fn inline_script_src_assignments_are_not_external_script_attributes() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                r#"<script>const node = {}; node.src = "parts.join('&')";</script>"#,
+                "https://example.test/",
+            )
+            .expect("document parses");
+        assert_eq!(artifact.extracted.scripts.len(), 1);
+        assert_eq!(artifact.extracted.scripts[0]["src"], "");
+    }
 }

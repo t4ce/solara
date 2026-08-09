@@ -344,7 +344,9 @@ fn paint_node(
             theme,
         ),
         ElementKind::Select { options, selected } => {
-            paint_select(shapes, text_out, bounds, options, *selected, theme);
+            paint_select(
+                shapes, text_out, bounds, options, *selected, node.open, theme,
+            );
         }
         ElementKind::Textarea { value, rows, .. } => {
             paint_textarea(shapes, text_out, bounds, value, *rows, theme);
@@ -411,6 +413,15 @@ fn paint_node(
                 bounds.y + bounds.height * 0.5 - 4.0,
                 alt,
                 [1.0, 1.0, 1.0, 1.0],
+            );
+        }
+        ElementKind::Video { .. } => {
+            fill_rect(shapes, bounds, [0.0, 0.0, 0.0, 1.0]);
+            stroke_rect(
+                shapes,
+                bounds,
+                style.border_color,
+                style.border_width.max(1.0),
             );
         }
         ElementKind::Dialog { children, floating } => {
@@ -736,9 +747,10 @@ fn paint_select(
     bounds: Rect,
     options: &[String],
     selected: usize,
+    open: bool,
     theme: &Theme,
 ) {
-    let rect = Rect::new(bounds.x, bounds.y, bounds.width.min(200.0), CONTROL_H);
+    let rect = Rect::new(bounds.x, bounds.y, bounds.width.min(280.0), CONTROL_H);
     fill_rect(shapes, rect, theme.control_bg);
     stroke_rect(shapes, rect, theme.border, 1.0);
     let label = options.get(selected).map(String::as_str).unwrap_or("");
@@ -748,6 +760,33 @@ fn paint_select(
         Rect::new(rect.x + rect.width - 18.0, rect.y + 6.0, 12.0, 12.0),
         theme.button_bg,
     );
+    if open {
+        for (index, option) in options.iter().enumerate() {
+            let option_rect = Rect::new(
+                rect.x,
+                rect.y + CONTROL_H * (index + 1) as f32,
+                rect.width,
+                CONTROL_H,
+            );
+            fill_rect(
+                shapes,
+                option_rect,
+                if index == selected {
+                    theme.button_bg
+                } else {
+                    theme.control_bg
+                },
+            );
+            stroke_rect(shapes, option_rect, theme.border, 1.0);
+            text::queue_left(
+                text_out,
+                option_rect.x + 6.0,
+                option_rect.y + 6.0,
+                option,
+                theme.text,
+            );
+        }
+    }
 }
 
 fn paint_textarea(

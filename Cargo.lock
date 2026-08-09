@@ -2435,6 +2435,7 @@ version = "0.0.6"
 dependencies = [
  "env_logger",
  "rust-qjs-dom",
+ "serde_json",
  "solara-wgpu-shim",
  "ureq",
  "url",

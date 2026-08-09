@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -12,18 +13,46 @@ use crate::ffi::{
     JS_Call, JS_EVAL_FLAG_COMPILE_ONLY, JS_EVAL_TYPE_GLOBAL, JS_EVAL_TYPE_MODULE, JS_Eval,
     JS_FreeCString, JS_FreeContext, JS_FreeRuntime, JS_GetContextOpaque, JS_GetException,
     JS_GetGlobalObject, JS_GetPropertyStr, JS_NewContext, JS_NewRuntime, JS_SetContextOpaque,
-    JS_SetMaxStackSize, JS_SetMemoryLimit, JS_SetModuleLoaderFunc, JS_SetPropertyStr,
-    JS_TAG_MODULE, JS_TAG_NULL, JS_TAG_UNDEFINED, JS_ToCStringLen2, JSContext, JSModuleDef,
-    JSRuntime, JSValue, js_malloc, rqjs_free_value, rqjs_is_exception, rqjs_is_function,
-    rqjs_json_stringify, rqjs_new_c_function_magic, rqjs_parse_json, rqjs_throw_host_error,
-    rqjs_throw_module_error, rqjs_value_ptr, rqjs_value_tag,
+    JS_SetInterruptHandler, JS_SetMaxStackSize, JS_SetMemoryLimit, JS_SetModuleLoaderFunc,
+    JS_SetPropertyStr, JS_TAG_MODULE, JS_TAG_NULL, JS_TAG_UNDEFINED, JS_ToCStringLen2, JSContext,
+    JSModuleDef, JSRuntime, JSValue, js_malloc, rqjs_free_value, rqjs_is_exception,
+    rqjs_is_function, rqjs_json_stringify, rqjs_new_c_function_magic, rqjs_parse_json,
+    rqjs_throw_host_error, rqjs_throw_module_error, rqjs_value_ptr, rqjs_value_tag,
 };
 
 type JsonHostFunction = dyn FnMut(&[Value]) -> Result<Value, String> + 'static;
 
-#[derive(Default)]
 struct HostState {
     functions: Vec<Box<JsonHostFunction>>,
+    execution_deadline: Option<Instant>,
+    execution_interrupted: bool,
+}
+
+impl Default for HostState {
+    fn default() -> Self {
+        Self {
+            functions: Vec::new(),
+            execution_deadline: None,
+            execution_interrupted: false,
+        }
+    }
+}
+
+unsafe extern "C" fn execution_interrupt(_runtime: *mut JSRuntime, opaque: *mut c_void) -> c_int {
+    let state = opaque.cast::<HostState>();
+    if state.is_null() {
+        return 0;
+    }
+    let state = unsafe { &mut *state };
+    if state
+        .execution_deadline
+        .is_some_and(|deadline| Instant::now() >= deadline)
+    {
+        state.execution_interrupted = true;
+        1
+    } else {
+        0
+    }
 }
 
 struct EmbeddedModule {
@@ -321,6 +350,7 @@ pub enum JsError {
     MissingEmbeddedModule(String),
     InvalidHostFunctionArity(usize),
     TooManyHostFunctions,
+    ExecutionTimedOut(Duration),
 }
 
 impl fmt::Display for JsError {
@@ -351,6 +381,13 @@ impl fmt::Display for JsError {
                 )
             }
             Self::TooManyHostFunctions => formatter.write_str("too many QuickJS host functions"),
+            Self::ExecutionTimedOut(limit) => {
+                write!(
+                    formatter,
+                    "QuickJS execution exceeded {} ms",
+                    limit.as_millis()
+                )
+            }
         }
     }
 }
@@ -411,6 +448,11 @@ impl JsEngine {
 
         let mut host_state = Box::<HostState>::default();
         unsafe {
+            JS_SetInterruptHandler(
+                runtime,
+                Some(execution_interrupt),
+                (&mut *host_state as *mut HostState).cast::<c_void>(),
+            );
             JS_SetContextOpaque(
                 context,
                 (&mut *host_state as *mut HostState).cast::<c_void>(),
@@ -432,6 +474,26 @@ impl JsEngine {
     /// Evaluates a classic script and discards its result.
     pub fn eval_void(&mut self, source: &str, filename: &str) -> Result<(), JsError> {
         let value = self.eval_raw(source.as_bytes(), filename, JS_EVAL_TYPE_GLOBAL)?;
+        unsafe { rqjs_free_value(self.context, value) };
+        Ok(())
+    }
+
+    /// Evaluates a classic script with a wall-clock deadline.
+    ///
+    /// Browser hosts should use this for untrusted page JavaScript so one
+    /// script cannot permanently occupy the runtime's owning thread.
+    pub fn eval_void_with_timeout(
+        &mut self,
+        source: &str,
+        filename: &str,
+        timeout: Duration,
+    ) -> Result<(), JsError> {
+        let value = self.eval_raw_with_timeout(
+            source.as_bytes(),
+            filename,
+            JS_EVAL_TYPE_GLOBAL,
+            Some(timeout),
+        )?;
         unsafe { rqjs_free_value(self.context, value) };
         Ok(())
     }
@@ -581,8 +643,20 @@ impl JsEngine {
         filename: &str,
         flags: c_int,
     ) -> Result<JSValue, JsError> {
+        self.eval_raw_with_timeout(source, filename, flags, None)
+    }
+
+    fn eval_raw_with_timeout(
+        &mut self,
+        source: &[u8],
+        filename: &str,
+        flags: c_int,
+        timeout: Option<Duration>,
+    ) -> Result<JSValue, JsError> {
         let filename = CString::new(filename)?;
         let terminated = nul_terminated(source);
+        self.host_state.execution_interrupted = false;
+        self.host_state.execution_deadline = timeout.map(|limit| Instant::now() + limit);
         let value = unsafe {
             JS_Eval(
                 self.context,
@@ -592,8 +666,14 @@ impl JsEngine {
                 flags,
             )
         };
+        self.host_state.execution_deadline = None;
         if unsafe { rqjs_is_exception(value) } != 0 {
-            Err(self.take_exception())
+            let error = self.take_exception();
+            if self.host_state.execution_interrupted {
+                Err(JsError::ExecutionTimedOut(timeout.unwrap_or_default()))
+            } else {
+                Err(error)
+            }
         } else {
             Ok(value)
         }
@@ -696,9 +776,26 @@ impl Drop for JsEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use serde_json::json;
 
     use super::{JsEngine, normalize_module_specifier};
+
+    #[test]
+    fn interrupts_page_script_that_exceeds_its_deadline() {
+        let mut engine = JsEngine::new().expect("engine starts");
+        let error = engine
+            .eval_void_with_timeout("for (;;) {}", "endless.js", Duration::from_millis(10))
+            .expect_err("endless script is interrupted");
+        assert!(error.to_string().contains("exceeded 10 ms"));
+        assert_eq!(
+            engine
+                .eval_json("6 * 7", "after-timeout.js")
+                .expect("runtime remains usable"),
+            json!(42)
+        );
+    }
 
     #[test]
     fn normalizes_relative_module_paths() {

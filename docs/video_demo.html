@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Solara video playback ladder</title>
+  <style>
+    body {
+      background: #fafafa;
+      color: #171717;
+      font-size: 18px;
+      line-height: 28px;
+    }
+
+    h1 {
+      color: #171717;
+      font-size: 20px;
+      line-height: 30px;
+    }
+
+    video {
+      background: #000000;
+      border-color: #202020;
+      border-width: 1px;
+    }
+
+    select {
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>https://www.youtube.com/watch?v=nXvnof8fTBc</h1>
+    <select id="format-select" aria-label="Cached video resolution">
+      <option selected>1440p MP4</option>
+    </select>
+    <video id="target-video" width="1920" height="1080" autoplay muted></video>
+  </main>
+</body>
+</html>

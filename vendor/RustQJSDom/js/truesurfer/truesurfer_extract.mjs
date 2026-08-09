@@ -336,9 +336,11 @@ function collectScriptArtifacts(source) {
 
   while ((match = scriptTagRe.exec(html))) {
     const tagHtml = safeString(match[0]);
+    const openingTagEnd = tagHtml.indexOf('>');
+    const openingTag = openingTagEnd >= 0 ? tagHtml.slice(0, openingTagEnd + 1) : tagHtml;
     scripts.push({
       order: scripts.length,
-      src: extractAttrValue(tagHtml, 'src'),
+      src: extractAttrValue(openingTag, 'src'),
       scriptText: safeString(match[1]),
       tagHtml,
     });

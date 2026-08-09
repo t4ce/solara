@@ -6,12 +6,21 @@ mod app;
 mod async_utils;
 mod geometry;
 mod html;
+pub(crate) mod input;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod loader;
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+mod media_store;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod renderer;
 mod shapes;
 mod text;
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+mod video;
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+pub(crate) mod youtube;
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+mod youtube_media;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub(crate) use text::{TextBatch as Ui4TextBatch, char_width as ui4_char_width};
@@ -63,6 +72,13 @@ impl Ui4TextDocument {
     pub(crate) fn rebuild_text(&mut self) -> &Ui4TextBatch {
         html::collect_batch(&self.document, 1.0, &mut self.batch);
         &self.batch.text
+    }
+
+    pub(crate) fn dispatch_mouse(
+        &mut self,
+        input: input::MouseInput,
+    ) -> Result<input::MouseDispatch, String> {
+        self.document.dispatch_mouse(input)
     }
 }
 

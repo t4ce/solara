@@ -26,6 +26,8 @@ pub mod text_only;
 
 #[cfg(not(feature = "text-only"))]
 const SHAPE_SHADER: &str = include_str!("shape.wgsl");
+#[cfg(not(feature = "text-only"))]
+const VIDEO_SHADER: &str = include_str!("video.wgsl");
 
 /// Renderer-neutral shape record accepted by [`GpuPainter`].
 #[cfg(not(feature = "text-only"))]
@@ -60,6 +62,31 @@ struct GpuShape {
     color: [f32; 4],
     shape_type: u32,
     _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(not(feature = "text-only"))]
+struct VideoVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+}
+
+#[cfg(not(feature = "text-only"))]
+struct VideoTexture {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+}
+
+/// One decoded RGBA8 frame and its destination rectangle in surface pixels.
+#[cfg(not(feature = "text-only"))]
+pub struct RgbaVideoFrame<'a> {
+    pub pixels: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+    pub destination: [f32; 4],
 }
 
 #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
@@ -348,6 +375,14 @@ pub struct GpuPainter {
     shape_pipeline: wgpu::RenderPipeline,
     #[cfg(not(feature = "text-only"))]
     shape_bind_group: wgpu::BindGroup,
+    #[cfg(not(feature = "text-only"))]
+    video_pipeline: wgpu::RenderPipeline,
+    #[cfg(not(feature = "text-only"))]
+    video_bind_group_layout: wgpu::BindGroupLayout,
+    #[cfg(not(feature = "text-only"))]
+    video_sampler: wgpu::Sampler,
+    #[cfg(not(feature = "text-only"))]
+    video_texture: Option<VideoTexture>,
     text_brush: TextBrush,
     #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
     view_width: u32,
@@ -396,6 +431,31 @@ impl GpuPainter {
                     resource: screen_buffer.as_entire_binding(),
                 }],
             });
+        #[cfg(not(feature = "text-only"))]
+        let video_bind_group_layout =
+            context
+                .device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("solara_video_bind_group_layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
         #[cfg(not(feature = "text-only"))]
         let shader = context
             .device()
@@ -448,6 +508,65 @@ impl GpuPainter {
                     multiview_mask: None,
                     cache: None,
                 });
+        #[cfg(not(feature = "text-only"))]
+        let video_shader = context
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("solara_video_shader"),
+                source: wgpu::ShaderSource::Wgsl(VIDEO_SHADER.into()),
+            });
+        #[cfg(not(feature = "text-only"))]
+        let video_pipeline_layout =
+            context
+                .device()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("solara_video_pipeline_layout"),
+                    bind_group_layouts: &[Some(&layout), Some(&video_bind_group_layout)],
+                    immediate_size: 0,
+                });
+        #[cfg(not(feature = "text-only"))]
+        let video_pipeline =
+            context
+                .device()
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("solara_video_pipeline"),
+                    layout: Some(&video_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &video_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<VideoVertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                        })],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &video_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
+        #[cfg(not(feature = "text-only"))]
+        let video_sampler = context.device().create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("solara_video_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         // TEXT_ONLY_WGPU_API: wgpu_text::BrushBuilder::build
         let text_brush =
             BrushBuilder::using_font(font().clone()).build(context.device(), width, height, format);
@@ -458,6 +577,14 @@ impl GpuPainter {
             shape_pipeline,
             #[cfg(not(feature = "text-only"))]
             shape_bind_group,
+            #[cfg(not(feature = "text-only"))]
+            video_pipeline,
+            #[cfg(not(feature = "text-only"))]
+            video_bind_group_layout,
+            #[cfg(not(feature = "text-only"))]
+            video_sampler,
+            #[cfg(not(feature = "text-only"))]
+            video_texture: None,
             text_brush,
             #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
             view_width: width,
@@ -511,7 +638,19 @@ impl GpuPainter {
         shapes: &[S],
         text: &[T],
     ) -> wgpu::CommandBuffer {
-        self.encode_inner(context, view, shapes, text, None)
+        self.encode_inner(context, view, shapes, text, None, None)
+    }
+
+    #[cfg(not(feature = "text-only"))]
+    pub fn encode_with_video<S: Shape, T: TextRun>(
+        &mut self,
+        context: &GpuContext,
+        view: &wgpu::TextureView,
+        shapes: &[S],
+        text: &[T],
+        video: RgbaVideoFrame<'_>,
+    ) -> wgpu::CommandBuffer {
+        self.encode_inner(context, view, shapes, text, Some(video), None)
     }
 
     #[cfg(all(feature = "visual-debug", not(feature = "text-only")))]
@@ -523,7 +662,7 @@ impl GpuPainter {
         text: &[T],
         visual_debug: &VisualDebug,
     ) -> wgpu::CommandBuffer {
-        self.encode_inner(context, view, shapes, text, Some(visual_debug))
+        self.encode_inner(context, view, shapes, text, None, Some(visual_debug))
     }
 
     #[cfg(not(feature = "text-only"))]
@@ -533,6 +672,7 @@ impl GpuPainter {
         view: &wgpu::TextureView,
         shapes: &[S],
         text: &[T],
+        video: Option<RgbaVideoFrame<'_>>,
         #[cfg(feature = "visual-debug")] visual_debug: Option<&VisualDebug>,
         #[cfg(not(feature = "visual-debug"))] _visual_debug: Option<&()>,
     ) -> wgpu::CommandBuffer {
@@ -564,6 +704,110 @@ impl GpuPainter {
                     contents: cast_slice(&gpu_shapes),
                     usage: wgpu::BufferUsages::VERTEX,
                 })
+        });
+        let video_gpu = video.and_then(|video| {
+            let expected = video.width as usize * video.height as usize * 4;
+            if video.width == 0 || video.height == 0 || video.pixels.len() != expected {
+                return None;
+            }
+            let needs_texture = self.video_texture.as_ref().is_none_or(|texture| {
+                texture.width != video.width || texture.height != video.height
+            });
+            if needs_texture {
+                let texture = context.device().create_texture(&wgpu::TextureDescriptor {
+                    label: Some("solara_video_frame"),
+                    size: wgpu::Extent3d {
+                        width: video.width,
+                        height: video.height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = context
+                    .device()
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("solara_video_bind_group"),
+                        layout: &self.video_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.video_sampler),
+                            },
+                        ],
+                    });
+                self.video_texture = Some(VideoTexture {
+                    texture,
+                    bind_group,
+                    width: video.width,
+                    height: video.height,
+                });
+            }
+            let texture = self.video_texture.as_ref()?;
+            context.queue().write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                video.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(video.width * 4),
+                    rows_per_image: Some(video.height),
+                },
+                wgpu::Extent3d {
+                    width: video.width,
+                    height: video.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let [x, y, width, height] = video.destination;
+            let vertices = [
+                VideoVertex {
+                    position: [x, y],
+                    uv: [0.0, 0.0],
+                },
+                VideoVertex {
+                    position: [x + width, y],
+                    uv: [1.0, 0.0],
+                },
+                VideoVertex {
+                    position: [x, y + height],
+                    uv: [0.0, 1.0],
+                },
+                VideoVertex {
+                    position: [x + width, y],
+                    uv: [1.0, 0.0],
+                },
+                VideoVertex {
+                    position: [x + width, y + height],
+                    uv: [1.0, 1.0],
+                },
+                VideoVertex {
+                    position: [x, y + height],
+                    uv: [0.0, 1.0],
+                },
+            ];
+            let vertex_buffer =
+                context
+                    .device()
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("solara_video_vertices"),
+                        contents: cast_slice(&vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+            Some((&texture.bind_group, vertex_buffer))
         });
         let mut encoder =
             context
@@ -598,6 +842,13 @@ impl GpuPainter {
                 pass.set_bind_group(0, &self.shape_bind_group, &[]);
                 pass.set_vertex_buffer(0, instance_buffer.slice(..));
                 pass.draw(0..6, 0..gpu_shapes.len() as u32);
+            }
+            if let Some((bind_group, vertex_buffer)) = &video_gpu {
+                pass.set_pipeline(&self.video_pipeline);
+                pass.set_bind_group(0, &self.shape_bind_group, &[]);
+                pass.set_bind_group(1, *bind_group, &[]);
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.draw(0..6, 0..1);
             }
             self.text_brush.draw(&mut pass);
         }
@@ -764,6 +1015,47 @@ impl Renderer {
             frame.view(),
             shapes,
             text,
+            None,
+            #[cfg(feature = "visual-debug")]
+            Some(&self.visual_debug),
+            #[cfg(not(feature = "visual-debug"))]
+            None,
+        );
+        self.context.queue().submit([commands]);
+        frame.present(self.context.queue());
+        #[cfg(feature = "visual-debug")]
+        self.visual_debug.clear();
+        Ok(())
+    }
+
+    /// Draw Solara's normal page paint with one decoded RGBA video frame.
+    #[cfg(not(feature = "text-only"))]
+    pub fn render_with_video<S: Shape, T: TextRun>(
+        &mut self,
+        shapes: &[S],
+        text: &[T],
+        video: RgbaVideoFrame<'_>,
+    ) -> Result<(), RenderError> {
+        let Some(frame) = self.surface.acquire()? else {
+            return Ok(());
+        };
+        #[cfg(feature = "visual-debug")]
+        {
+            self.visual_debug.indicate(VisualDebugEvent::FrameAcquire);
+            if !shapes.is_empty() {
+                self.visual_debug.indicate(VisualDebugEvent::ShapeUpload);
+            }
+            if !text.is_empty() {
+                self.visual_debug.indicate(VisualDebugEvent::GlyphUpload);
+            }
+            self.visual_debug.indicate(VisualDebugEvent::SubmitPresent);
+        }
+        let commands = self.painter.encode_inner(
+            &self.context,
+            frame.view(),
+            shapes,
+            text,
+            Some(video),
             #[cfg(feature = "visual-debug")]
             Some(&self.visual_debug),
             #[cfg(not(feature = "visual-debug"))]

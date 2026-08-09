@@ -321,6 +321,10 @@ pub enum ElementKind {
         height: f32,
         alt: String,
     },
+    Video {
+        width: f32,
+        height: f32,
+    },
     Dialog {
         children: Vec<HtmlNode>,
         floating: bool,
@@ -432,6 +436,7 @@ impl ElementKind {
             ElementKind::Canvas { .. } => "canvas",
             ElementKind::Iframe { .. } => "iframe",
             ElementKind::Image { .. } => "img",
+            ElementKind::Video { .. } => "video",
             ElementKind::Dialog { .. } => "dialog",
             ElementKind::Progress { .. } => "progress",
             ElementKind::Meter { .. } => "meter",

@@ -19,14 +19,112 @@ HTML bytes
 
 RustQJSDom also enumerates HTML, CSS `url(...)`, image, `srcset`, media,
 iframe, script, preload, and favicon requests. Except for linked stylesheets,
-Solara preserves this index as metadata only: no decode, cache, media stream,
-image upload, or paint binding is part of this migration. The resolved favicon
-URL remains on `LoadedPage`/`GpuUiApp` for a future window-icon loader.
+Solara preserves this index as metadata only: it is not yet connected to a
+cache, network media stream, image upload, or paint binding. The resolved
+favicon URL remains on `LoadedPage`/`GpuUiApp` for a future window-icon loader.
+
+## Passive YouTube watch boundary
+
+The default Linux session fetches the pinned watch page once and extracts a
+typed `YoutubeWatchBootstrap`. It retains the video ID and title, player
+JavaScript URL, adaptive-format descriptions, expiry, and the exact opaque
+`serverAbrStreamingUrl` and `videoPlaybackUstreamerConfig` values supplied by
+YouTube. Solara also atomically caches the exact server responses and opaque
+values under `media/youtube/<video-id>/`:
+
+- `watch.html`
+- `player-url.txt`
+- `player.js`
+- `server-abr-url.txt`
+- `video-playback-ustreamer-config.bin`
+- `video-<itag>.mp4` (selected MP4 media-cache bridge output)
+
+Each launch replaces these snapshots with the mutually current watch session;
+signed and expiring values are not treated as permanent. Extraction and cache
+identity are fixture-tested and do not rewrite or interpret the stored bytes. A
+failed watch fetch or session-cache write is non-fatal and leaves the local
+playback proof available.
+
+The watch material remains deliberately passive. On the pinned live response,
+a plain ranged `GET` to the supplied SABR URL returned `403` and no body. A
+reference-compatible SABR POST reached an `application/vnd.yt-ump` response and
+format initialization metadata, but stream protection remained pending and it
+returned no media parts. Solara therefore does not invent a SABR exchange,
+alter the capsule, or treat either opaque value as a direct URL.
+
+There is one isolated filesystem-before-decoder fast path. On the first default
+run, Solara downloads the pinned yt-dlp 2026.07.04 zipapp, verifies its fixed
+SHA-256 digest before execution, and runs it through Python 3 with Node-backed
+EJS support and the `web_embedded` client profile. Solara derives one MP4 choice
+per resolution from the current response, preferring AV1 when multiple MP4
+codecs describe the same height. The static startup preference is 1440p; if it
+is absent, Solara requests the highest lower advertised resolution once. The
+resulting `video-<itag>.mp4` is accepted only when its size equals the selected
+format's `contentLength` and its header identifies an ISO BMFF asset. Later runs
+validate and reuse the same file without executing the bridge. Tool or
+media-fetch failure remains non-fatal to the empty video presentation.
+
+This bridge is a replaceable YouTube-specific black box, not browser media API
+emulation and not a second interpretation of SABR. Its output path is the sole
+desktop playback source. The supplied target URL becomes the document's one
+heading. The only additional page UI is a Solara-painted HTML `<select>` filled
+from those already captured format descriptions.
+
+## Local video presentation boundary
+
+The default Linux-only presentation remains intentionally narrower than a media
+API. `docs/video_demo.html` contributes the target heading and a specialized
+`<video>` layout box. Once the atomically published cache file satisfies a
+best-effort ten-second buffer estimate, a bounded mailbox carries 768x432 RGBA
+frames from Linux GStreamer to the winit event loop, and Solara uploads those
+frames into one retained WGPU texture:
+
+```text
+validated YouTube cache artifact -> File-backed EncodedVideoStream
+  -> Linux GStreamer decodebin -> RGBA mailbox
+  -> retained Solara texture -> computed <video> rectangle -> Solara surface
+```
+
+The rectangle follows the document width and preserves 16:9 across relayouts.
+The media bridge downloads to yt-dlp's `.part` path and publishes the final
+filename only after completion. Solara currently treats that conservative
+atomic boundary as more than ten seconds buffered; the estimator is retained
+so a later progressive-cache producer can expose an earlier safe point. Opening
+the HTML select expands rows in Solara layout and paint. Choosing a different
+row cancels the current playback generation, makes exactly one background cache
+request, and starts that generation only after validation. There is no embedded
+fallback: absent media, a failed validation, or a failed decode leaves the black
+rectangle empty. `decodebin` makes codec discovery best effort, and missing host
+codec support is non-fatal. This boundary does not connect `src`, JavaScript
+media methods, audio, or TRUEOS hardware decode.
 
 The previous Solara `CssEngine`, Stylo dependencies, and duplicate stylesheet
 collector have been removed. RustQJSDom/Lightning CSS is the sole CSS path.
 
-Parsing does not execute page `<script>` elements. The retained `JsEngine` is ready for Solara's future `window` and `document` host bindings without creating a second JavaScript runtime.
+Parsing does not execute page `<script>` elements. The retained `JsEngine` now
+owns Solara's first browser host binding: mouse input. Page-script execution can
+use that same context without creating a second JavaScript runtime.
+
+## Mouse input boundary
+
+Both native producers normalize into `gpu_ui::input::MouseInput`:
+
+```text
+Linux winit WindowEvent ─┐
+                        ├─> MouseInput -> retained QuickJS document -> window bubble
+TrueOS HidHut -> UI4 ───┘
+```
+
+The QuickJS host supplies `EventTarget`, `Event`, `CustomEvent`, `UIEvent`,
+`MouseEvent`, and `WheelEvent`. Movement, button, wheel, modifier, client, and
+screen fields cross the native boundary. Listener exceptions are contained like
+browser event-handler exceptions, while `preventDefault()` crosses back to Rust
+so the desktop host can suppress native defaults such as scrolling.
+
+Solara does not yet expose its `HtmlNode` projection as live JavaScript element
+objects. Until that binding exists, hardware events target `document` and then
+bubble to `window`; they are not falsely attributed to a hit-tested element.
+TrueOS frame selection and local-coordinate hit testing remain owned by UI4.
 
 ## Visual parity proof
 

@@ -11,6 +11,8 @@ use paint::paint_document;
 use parser::parse_html;
 use rust_qjs_dom::{DomArtifact, DomEngine, JsEngine};
 
+use crate::gpu_ui::input::{self, MouseDispatch, MouseInput};
+
 #[derive(Default)]
 pub struct RenderBatch {
     pub shapes: Vec<crate::gpu_ui::shapes::ShapeInstance>,
@@ -31,6 +33,10 @@ pub struct Document {
     dom: DomArtifact,
     dom_engine: DomEngine,
     page_width: f32,
+}
+
+pub(crate) struct SelectInteraction {
+    pub(crate) selected: Option<usize>,
 }
 
 impl Document {
@@ -58,6 +64,7 @@ impl Document {
             .js_mut()
             .eval_void(&bootstrap, "<solara-bootstrap>")
             .map_err(|error| format!("failed to initialize Solara's JavaScript host: {error}"))?;
+        input::install(document.js_mut())?;
         Ok(document)
     }
 
@@ -70,10 +77,41 @@ impl Document {
         self.dom_engine.js_mut()
     }
 
+    pub(crate) fn dispatch_mouse(&mut self, input: MouseInput) -> Result<MouseDispatch, String> {
+        input::dispatch(self.js_mut(), input)
+    }
+
     pub fn relayout(&mut self, page_width: f32) {
         self.page_width = page_width;
         layout_document(&mut self.nodes, page_width, &self.dom.style_index);
         self.content_height = document_height(&self.nodes);
+    }
+
+    pub(crate) fn set_primary_heading_text(&mut self, text: &str) -> bool {
+        if !set_first_heading_text(&mut self.nodes, text) {
+            return false;
+        }
+        self.relayout(self.page_width);
+        true
+    }
+
+    pub(crate) fn configure_select(
+        &mut self,
+        id: &str,
+        options: Vec<String>,
+        selected: usize,
+    ) -> bool {
+        if options.is_empty() || !configure_select_node(&mut self.nodes, id, &options, selected) {
+            return false;
+        }
+        self.relayout(self.page_width);
+        true
+    }
+
+    pub(crate) fn activate_select_at(&mut self, x: f32, y: f32) -> Option<SelectInteraction> {
+        let interaction = activate_select(&mut self.nodes, x, y + self.scroll_y)?;
+        self.relayout(self.page_width);
+        Some(interaction)
     }
 
     pub fn scroll_by(&mut self, delta: f32) {
@@ -95,6 +133,184 @@ impl Document {
         self.content_height = document_height(&self.nodes);
         true
     }
+
+    #[cfg_attr(feature = "gpu-text-only", allow(dead_code))]
+    pub fn video_bounds(&self) -> Option<[f32; 4]> {
+        find_video_bounds(&self.nodes).map(|bounds| {
+            [
+                bounds.x,
+                bounds.y - self.scroll_y,
+                bounds.width,
+                bounds.height,
+            ]
+        })
+    }
+}
+
+#[cfg_attr(feature = "gpu-text-only", allow(dead_code))]
+fn find_video_bounds(nodes: &[HtmlNode]) -> Option<crate::gpu_ui::geometry::Rect> {
+    for node in nodes {
+        if matches!(node.kind, node::ElementKind::Video { .. }) {
+            return Some(node.bounds);
+        }
+        let found = match &node.kind {
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => find_video_bounds(children),
+            node::ElementKind::Label { control, .. } => {
+                find_video_bounds(std::slice::from_ref(control))
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+fn set_first_heading_text(nodes: &mut [HtmlNode], text: &str) -> bool {
+    for node in nodes {
+        let updated = match &mut node.kind {
+            node::ElementKind::Heading {
+                text: heading_text, ..
+            } => {
+                text.clone_into(heading_text);
+                true
+            }
+            node::ElementKind::Element { tag, children }
+                if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+            {
+                set_first_plain_text(children, text)
+            }
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => set_first_heading_text(children, text),
+            node::ElementKind::Label { control, .. } => {
+                set_first_heading_text(std::slice::from_mut(control), text)
+            }
+            _ => false,
+        };
+        if updated {
+            return true;
+        }
+    }
+    false
+}
+
+fn set_first_plain_text(nodes: &mut [HtmlNode], text: &str) -> bool {
+    for node in nodes {
+        let updated = match &mut node.kind {
+            node::ElementKind::PlainText { text: current } => {
+                text.clone_into(current);
+                true
+            }
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => set_first_plain_text(children, text),
+            node::ElementKind::Label { control, .. } => {
+                set_first_plain_text(std::slice::from_mut(control), text)
+            }
+            _ => false,
+        };
+        if updated {
+            return true;
+        }
+    }
+    false
+}
+
+fn configure_select_node(
+    nodes: &mut [HtmlNode],
+    id: &str,
+    options: &[String],
+    selected: usize,
+) -> bool {
+    for node in nodes {
+        if node.id_attr.as_deref() == Some(id)
+            && let node::ElementKind::Select {
+                options: current,
+                selected: current_selected,
+            } = &mut node.kind
+        {
+            *current = options.to_vec();
+            *current_selected = selected.min(current.len() - 1);
+            node.open = false;
+            return true;
+        }
+        let configured = match &mut node.kind {
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => {
+                configure_select_node(children, id, options, selected)
+            }
+            node::ElementKind::Label { control, .. } => {
+                configure_select_node(std::slice::from_mut(control), id, options, selected)
+            }
+            _ => false,
+        };
+        if configured {
+            return true;
+        }
+    }
+    false
+}
+
+fn activate_select(nodes: &mut [HtmlNode], x: f32, y: f32) -> Option<SelectInteraction> {
+    for node in nodes {
+        if let node::ElementKind::Select { options, selected } = &mut node.kind {
+            if node.bounds.contains(x, y) {
+                if !node.open {
+                    node.open = true;
+                    return Some(SelectInteraction { selected: None });
+                }
+                let row = ((y - node.bounds.y) / crate::gpu_ui::geometry::CONTROL_H)
+                    .floor()
+                    .max(0.0) as usize;
+                node.open = false;
+                if let Some(option_index) =
+                    row.checked_sub(1).filter(|index| *index < options.len())
+                {
+                    let changed = (*selected != option_index).then_some(option_index);
+                    *selected = option_index;
+                    return Some(SelectInteraction { selected: changed });
+                }
+                return Some(SelectInteraction { selected: None });
+            }
+            if node.open {
+                node.open = false;
+                return Some(SelectInteraction { selected: None });
+            }
+        }
+        let interaction = match &mut node.kind {
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => activate_select(children, x, y),
+            node::ElementKind::Label { control, .. } => {
+                activate_select(std::slice::from_mut(control), x, y)
+            }
+            _ => None,
+        };
+        if interaction.is_some() {
+            return interaction;
+        }
+    }
+    None
 }
 
 fn toggle_details_recursive(nodes: &mut [HtmlNode], x: f32, y: f32) -> bool {
@@ -217,10 +433,10 @@ mod parity_baseline {
             }
             hash_bytes(&mut hash, section.text.as_bytes());
         }
-        assert_eq!(batch.shapes.len(), 141);
-        assert_eq!(batch.text.sections.len(), 83);
-        assert_eq!(document.content_height.to_bits(), 0x455e8000);
-        assert_eq!(hash, 0x233ebbe76e0dc804);
+        assert_eq!(batch.shapes.len(), 147);
+        assert_eq!(batch.text.sections.len(), 79);
+        assert_eq!(document.content_height.to_bits(), 0x4558a000);
+        assert_eq!(hash, 0x6e15986a9080876b);
     }
 
     #[test]
@@ -250,6 +466,42 @@ mod parity_baseline {
                 1.0
             ]
         );
+    }
+
+    #[test]
+    fn solara_select_opens_and_reports_one_changed_option() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                "<main><select id='format'><option>480p</option></select></main>",
+                "https://solara.test/select",
+            )
+            .expect("document parses");
+        let mut document = Document::from_dom(artifact, engine, 960.0).expect("document adapts");
+        assert!(document.configure_select(
+            "format",
+            vec!["480p MP4".to_owned(), "360p MP4".to_owned()],
+            0,
+        ));
+        let closed = find_by_html_id(&document.nodes, "format")
+            .expect("select exists")
+            .bounds;
+        let opened = document
+            .activate_select_at(closed.x + 4.0, closed.y + 4.0)
+            .expect("closed select consumes click");
+        assert_eq!(opened.selected, None);
+
+        let open = find_by_html_id(&document.nodes, "format")
+            .expect("open select exists")
+            .bounds;
+        assert!(open.height > closed.height);
+        let changed = document
+            .activate_select_at(
+                open.x + 4.0,
+                open.y + crate::gpu_ui::geometry::CONTROL_H * 2.5,
+            )
+            .expect("option consumes click");
+        assert_eq!(changed.selected, Some(1));
     }
 
     #[test]

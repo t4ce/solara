@@ -22,6 +22,9 @@ Solara is not a replacement for Chrome, Firefox, or Safari. In its early stages,
 - Rust nightly
 - Cargo
 - A C compiler for the vendored QuickJS runtime
+- Python 3 and Node.js for the isolated YouTube media-cache bridge
+- Linux GStreamer runtime plugins for `decodebin`, `videoconvert`, `videoscale`,
+  and `fdsink`, plus a decoder matching the cached YouTube representation
 
 The project uses Rust 2024 edition.
 
@@ -39,18 +42,18 @@ Then run the following command from the project root:
 cargo build --locked
 ```
 
-Run the two-window demo. It opens the bundled `docs/demoui.html` and the
-repository-root `preview.html` as independent browser windows:
+Run the one-window playback ladder. It shows the current YouTube target URL, an
+advertised-resolution dropdown, and a size-respecting `<video>` box that
+conditionally plays its cached media:
 
 ```bash
 cargo run
 ```
 
-Load a local file or remote URL:
+Use a different YouTube watch URL as the single optional program argument:
 
 ```bash
-cargo run -- ./docs/demoui.html
-cargo run -- https://example.com/
+cargo run -- 'https://www.youtube.com/watch?v=nXvnof8fTBc'
 ```
 
 Run checks:
@@ -64,7 +67,24 @@ On Linux, Solara leaves WGPU 30's Vulkan validation layer disabled because its
 current swapchain path reuses an acquire fence without resetting it. Set
 `WGPU_VALIDATION=1` when explicitly debugging the backend.
 
-The default `docs/demoui.html` is parsed by RustQJSDom/Parse5 and styled by its Lightning CSS stage before Solara builds layout nodes. A render-digest regression test locks the no-author-CSS handoff to the approved visual output. See [the engine handoff notes](docs/engine-handoff.md) for the boundary and update workflow.
+The default `docs/video_demo.html` is parsed by RustQJSDom/Parse5 and styled by
+its Lightning CSS stage before Solara builds layout nodes. The exact watch
+response, player JavaScript, signed SABR URL, and ustreamer capsule are refreshed under
+`solara/media/youtube/<video-id>` in the same cache root. Separately, a pinned,
+SHA-256-verified yt-dlp zipapp uses its embedded-player client profile and EJS
+support to cache one MP4 representation as `video-<itag>.mp4`. Solara offers one
+MP4 choice per advertised resolution. Startup prefers 1440p and falls back once
+to the highest lower resolution when unavailable; changing the Solara-rendered
+dropdown issues one request for that selection. Each file is checked against
+the current watch response's byte length and ISO BMFF header. A complete atomic
+cache artifact satisfies the current conservative ten-second readiness
+estimate; only then does Linux GStreamer attempt playback. Missing media or
+codec support leaves the video box empty without affecting the window. Solara
+retains decoded RGBA frames, computes the video box, and composites them in its
+own WGPU window.
+`docs/demoui.html` remains the render-digest integration fixture. See [the
+engine handoff notes](docs/engine-handoff.md) for the boundary and update
+workflow.
 
 The static scene supports mixed CSS font sizes end to end. Computed `font-size`
 and `line-height` values—including inherited sizes, heading defaults, relative

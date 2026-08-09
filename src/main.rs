@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["ui4-solara-text"]
+// trueos-blueprint: features=["ui4-scene"]
 
 mod gpu_ui;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -17,8 +17,8 @@ fn main() {
     // workspace-wide RUST_LOG=warn overrides the default filter.
     logger.parse_filters("sctk_adwaita::buttons=error");
     let _ = logger.try_init();
-    let source = std::env::args().nth(1);
-    if let Err(error) = gpu_ui::run(source) {
+    let watch_url = std::env::args().skip(1).last();
+    if let Err(error) = gpu_ui::run(watch_url) {
         eprintln!("solara: {error}");
         std::process::exit(1);
     }

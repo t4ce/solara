@@ -4,6 +4,7 @@ version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
 description = "A small experimental browser built with Rust and QuickJS."
+default-run = "solara"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/iamwjun/solara"
@@ -18,18 +19,34 @@ include = [
     "README.md",
     "preview.html",
     "src/**/*.rs",
+    "src/**/*.js",
     "src/**/*.wgsl",
     "crates/solara-wgpu-shim/**",
     "docs/demoui.html",
     "docs/demoui.css",
+    "docs/video_demo.html",
     "docs/engine-handoff.md",
+    "docs/youtube-js-probe.md",
 ]
+
+[dependencies]
+serde_json = "1.0"
 
 [features]
 default = []
 gpu-text-only = ["solara-wgpu-shim/text-only"]
 gpu-visual-debug = ["solara-wgpu-shim/visual-debug"]
 trueos-blueprint = []
+youtube-js-probe = []
+
+[[bin]]
+name = "solara"
+path = "src/main.rs"
+
+[[bin]]
+name = "youtube-js-probe"
+path = "src/bin/youtube_js_probe.rs"
+required-features = ["youtube-js-probe"]
 
 [target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
 env_logger = "0.11.11"
