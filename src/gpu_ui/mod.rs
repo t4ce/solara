@@ -36,6 +36,12 @@ fn clamped_vertical_pan(
     (scroll_y - drag_dy as f32).clamp(0.0, maximum)
 }
 
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) fn clamped_pan_origin(origin: u32, drag: i32, canvas: u32, viewport: u32) -> u32 {
+    let maximum = canvas.saturating_sub(viewport);
+    (i64::from(origin) - i64::from(drag)).clamp(0, i64::from(maximum)) as u32
+}
+
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub use app::run;
 
@@ -114,7 +120,7 @@ pub(crate) fn ui4_document_for_html(
 
 #[cfg(test)]
 mod tests {
-    use super::clamped_vertical_pan;
+    use super::{clamped_pan_origin, clamped_vertical_pan};
 
     #[test]
     fn direct_vertical_pan_follows_drag_and_clamps_to_document() {
@@ -123,5 +129,13 @@ mod tests {
         assert_eq!(clamped_vertical_pan(80.0, 500, 2_000.0, 720.0), 0.0);
         assert_eq!(clamped_vertical_pan(0.0, -5_000, 2_000.0, 720.0), 1_280.0);
         assert_eq!(clamped_vertical_pan(0.0, -100, 500.0, 720.0), 0.0);
+    }
+
+    #[test]
+    fn retained_canvas_pan_only_moves_on_overflowing_axes() {
+        assert_eq!(clamped_pan_origin(0, -120, 2_000, 720), 120);
+        assert_eq!(clamped_pan_origin(120, 40, 2_000, 720), 80);
+        assert_eq!(clamped_pan_origin(0, -120, 960, 2_560), 0);
+        assert_eq!(clamped_pan_origin(560, -120, 2_000, 1_440), 560);
     }
 }

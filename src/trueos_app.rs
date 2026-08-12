@@ -1,26 +1,30 @@
 //! TRUEOS Blueprint entry point for Solara's static text-only UI4 pass.
 
 use trueos::ui4_scene::{
-    self, Damage, Error, Font, Frame, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY,
-    POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow,
+    self, CursorSource, Damage, Error, Font, FontCanvasRow, Frame, POINTER_BUTTON_MIDDLE,
+    POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PanPhase, PointerEvent, SpriteCorner,
+    SpriteQuad,
 };
 
 use crate::gpu_ui::input::{MouseEventKind, MouseInput};
 
 const FRAME_WIDTH: u32 = 960;
 const FRAME_HEIGHT: u32 = 720;
-const RENDER_ONCE_ARG: &str = "--trueos-render-once";
-const HTML_TAG_ARG: &str = "--trueos-html-tag";
-const SOURCE_URL_ARG: &str = "--trueos-source-url";
+const LAUNCH_SCRIPT_PATH: &[u8] = b"vFile:launch";
+const SURF_LAUNCH_HEADER: &str = "solara-surf-v1";
 const HANDOFF_ROOT: &str = "/common/solara/surf";
 const RESIDENT_POLL_MS: u64 = 16;
 const PRESENT_RETRY_MS: u64 = 2;
-const FONT_STAMP_MAX_ROWS_PER_LAYER: usize = 64;
-const FONT_STAMP_MAX_LAYERS: usize = 64;
-const FONT_STAMP_MAX_ROWS: usize = 256;
+// A 2,000-line-pixel 16:9 surface is the retained-document budget. Solara's
+// current page is only FRAME_WIDTH wide, so it normally allocates considerably
+// less while retaining enough height to pan at 1440p.
+const TEXT_CANVAS_MAX_WIDTH: u32 = 3_556;
+const TEXT_CANVAS_MAX_HEIGHT: u32 = 2_000;
+const FONT_CANVAS_MAX_ROWS: usize = 256;
 const TEXT_ROW_MAX_BYTES: usize = 1_024;
-const TEXT_FRAME_MAX_GLYPHS: usize = 4_096;
+const TEXT_CANVAS_MAX_GLYPHS: usize = 4_096;
 const BACKGROUND_RGBA: u32 = ui4_scene::rgba(250, 250, 250, 255);
+const TRANSPARENT_RGBA: u32 = ui4_scene::rgba(0, 0, 0, 0);
 // Solara lays out every current text run with the same monospaced metrics as
 // its bundled desktop face. Keep the UI4 scene on that face as well instead
 // of repainting those coordinates with the proportional legacy default.
@@ -32,9 +36,17 @@ struct RenderDocument {
     handoff_path: Option<String>,
 }
 
+struct SurfLaunch {
+    tag: String,
+    source_url: String,
+}
+
 struct SolaraView {
     frame: Frame,
     document: crate::gpu_ui::Ui4TextDocument,
+    canvas: (u32, u32),
+    origin: (u32, u32),
+    active_pan_source: Option<CursorSource>,
 }
 
 struct OwnedTextRow {
@@ -42,20 +54,66 @@ struct OwnedTextRow {
     x: f32,
     y: f32,
     font_pixels: f32,
-}
-
-struct FontColorLayer {
     color_rgba: u32,
-    rows: Vec<OwnedTextRow>,
 }
 
-struct StaticTextStats {
+struct TextCanvasStats {
     rows: usize,
-    layers: usize,
     glyphs: usize,
 }
 
 impl SolaraView {
+    fn clamp_origin(&mut self) {
+        self.origin.0 = self
+            .origin
+            .0
+            .min(self.canvas.0.saturating_sub(self.frame.width()));
+        self.origin.1 = self
+            .origin
+            .1
+            .min(self.canvas.1.saturating_sub(self.frame.height()));
+    }
+
+    fn take_view_updates(&mut self) -> Result<bool, Error> {
+        let mut changed = false;
+        while let Some(event) = self.frame.take_resize_event()? {
+            if event.width == self.frame.width() && event.height == self.frame.height() {
+                continue;
+            }
+            retry_busy(|| self.frame.resize(event.width, event.height))?;
+            self.clamp_origin();
+            changed = true;
+        }
+        while let Some(event) = self.frame.take_pan_event()? {
+            match event.phase {
+                PanPhase::Begin => self.active_pan_source = Some(event.source),
+                PanPhase::Update if self.active_pan_source == Some(event.source) => {
+                    let next = (
+                        crate::gpu_ui::clamped_pan_origin(
+                            self.origin.0,
+                            event.dx,
+                            self.canvas.0,
+                            self.frame.width(),
+                        ),
+                        crate::gpu_ui::clamped_pan_origin(
+                            self.origin.1,
+                            event.dy,
+                            self.canvas.1,
+                            self.frame.height(),
+                        ),
+                    );
+                    changed |= next != self.origin;
+                    self.origin = next;
+                }
+                PanPhase::End if self.active_pan_source == Some(event.source) => {
+                    self.active_pan_source = None;
+                }
+                _ => {}
+            }
+        }
+        Ok(changed)
+    }
+
     fn take_mouse_updates(&mut self) -> Result<(), Error> {
         while let Some(event) = self.frame.take_pointer_event()? {
             let modifiers = self
@@ -70,13 +128,29 @@ impl SolaraView {
         }
         Ok(())
     }
+
+    fn present_viewport(&mut self) -> Result<(), Error> {
+        self.clamp_origin();
+        retry_busy(|| self.frame.begin_sprite_frame(TRANSPARENT_RGBA))?;
+        let visible_width = self.frame.width().min(self.canvas.0 - self.origin.0);
+        let visible_height = self.frame.height().min(self.canvas.1 - self.origin.1);
+        let text = self.frame.font_canvas_quad(self.canvas, self.origin)?;
+        self.frame.draw_sprite_quads(&[
+            solid_quad(visible_width, visible_height, BACKGROUND_RGBA),
+            text,
+        ])?;
+        retry_busy(|| {
+            self.frame
+                .publish(Damage::full(self.frame.width(), self.frame.height()))
+        })
+    }
 }
 
 pub(crate) fn run() -> ! {
     match trueos::async_fs::block_on(present_text_frame()) {
         Ok(view) => {
             trueos::vsys::write_out(
-                b"solara: DOM text published once through immutable UI4 + FontKernel RGBA frame stamp\n",
+                b"solara: retained FontKernel canvas visible; middle-drag crop pan and maximize active\n",
             );
             resident_view_loop(view)
         }
@@ -101,6 +175,19 @@ fn resident_view_loop(mut view: SolaraView) -> ! {
             );
             trueos::vsys::write_out(message.as_bytes());
         }
+        match view.take_view_updates() {
+            Ok(true) => {
+                if let Err(error) = view.present_viewport() {
+                    let message = format!("solara: viewport presentation failed: {error:?}\n");
+                    trueos::vsys::write_err(message.as_bytes());
+                }
+            }
+            Ok(false) | Err(Error::Busy) => {}
+            Err(error) => {
+                let message = format!("solara: UI4 pan/resize input failed: {error:?}\n");
+                trueos::vsys::write_err(message.as_bytes());
+            }
+        }
         match view.take_mouse_updates() {
             Ok(()) | Err(Error::Busy) => {}
             Err(error) => {
@@ -113,8 +200,8 @@ fn resident_view_loop(mut view: SolaraView) -> ! {
 }
 
 async fn present_text_frame() -> Result<SolaraView, Error> {
-    // Build the DOM once in logical page coordinates. This temporary text-only
-    // mode stamps the initial viewport directly into one immutable UI4 frame.
+    // Build the DOM once in logical page coordinates and materialize one warm
+    // GPU canvas. Pan and maximize only change the crop composed into UI4.
     let document = render_document().await?;
     let mut ui4_document = match document.source.as_deref() {
         Some(source) => crate::gpu_ui::ui4_document_for_html(
@@ -131,12 +218,20 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         Error::Invalid
     })?;
     let content_height = ui4_document.content_height();
+    let canvas = (
+        FRAME_WIDTH.min(TEXT_CANVAS_MAX_WIDTH),
+        (content_height.ceil() as u32).clamp(1, TEXT_CANVAS_MAX_HEIGHT),
+    );
     let mut view = SolaraView {
         frame: Frame::open_immutable(160, 180, FRAME_WIDTH, FRAME_HEIGHT)?,
         document: ui4_document,
+        canvas,
+        origin: (0, 0),
+        active_pan_source: None,
     };
     let text = view.document.rebuild_text();
-    let stats = stamp_static_text_frame(&mut view.frame, text)?;
+    let stats = build_text_canvas(&mut view.frame, view.canvas, text)?;
+    view.present_viewport()?;
     if let Some(path) = document.handoff_path.as_deref() {
         match trueos::async_fs::remove(path.as_bytes()).await {
             Ok(()) => {
@@ -150,12 +245,13 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         }
     }
     let summary = format!(
-        "solara: static scene rows={} layers={} glyphs={} viewport={}x{} content_height={:.1} font=inconsolata source={}\n",
+        "solara: retained scene rows={} glyphs={} viewport={}x{} canvas={}x{} content_height={:.1} font=inconsolata source={}\n",
         stats.rows,
-        stats.layers,
         stats.glyphs,
         FRAME_WIDTH,
         FRAME_HEIGHT,
+        view.canvas.0,
+        view.canvas.1,
         content_height,
         document.source_url,
     );
@@ -211,26 +307,26 @@ fn dispatch_pointer_event(
     }
 }
 
-fn stamp_static_text_frame(
+fn build_text_canvas(
     frame: &mut Frame,
+    canvas: (u32, u32),
     text: &crate::gpu_ui::Ui4TextBatch,
-) -> Result<StaticTextStats, Error> {
+) -> Result<TextCanvasStats, Error> {
     let glyphs = text
         .sections
         .iter()
         .map(|section| section.text.chars().count())
         .sum::<usize>();
-    if glyphs > TEXT_FRAME_MAX_GLYPHS {
+    if glyphs > TEXT_CANVAS_MAX_GLYPHS {
         let message = format!(
-            "solara: static text frame exceeds {} glyph softcap: {}\n",
-            TEXT_FRAME_MAX_GLYPHS, glyphs,
+            "solara: retained text canvas exceeds {} glyph softcap: {}\n",
+            TEXT_CANVAS_MAX_GLYPHS, glyphs,
         );
         trueos::vsys::write_err(message.as_bytes());
         return Err(Error::Invalid);
     }
 
-    let mut layers = Vec::<FontColorLayer>::new();
-    let mut row_count = 0usize;
+    let mut rows = Vec::<OwnedTextRow>::new();
     for section in &text.sections {
         let color = packed_color(section.color);
         let advance = crate::gpu_ui::ui4_char_width(section.font_size);
@@ -245,69 +341,64 @@ fn stamp_static_text_frame(
                 return Err(Error::Invalid);
             }
             let fragment = &section.text[byte_start..byte_end];
-            let row = OwnedTextRow {
+            rows.push(OwnedTextRow {
                 text: fragment.to_string(),
                 x: section.x + character_start as f32 * advance,
                 y: section.y,
                 font_pixels: section.font_size,
-            };
-            let layer_index = match layers.iter_mut().position(|layer| {
-                layer.color_rgba == color && layer.rows.len() < FONT_STAMP_MAX_ROWS_PER_LAYER
-            }) {
-                Some(index) => index,
-                None => {
-                    layers.push(FontColorLayer {
-                        color_rgba: color,
-                        rows: Vec::new(),
-                    });
-                    layers.len() - 1
-                }
-            };
-            layers[layer_index].rows.push(row);
-            row_count += 1;
+                color_rgba: color,
+            });
             character_start += fragment.chars().count();
             byte_start = byte_end;
         }
     }
-    if row_count > FONT_STAMP_MAX_ROWS || layers.len() > FONT_STAMP_MAX_LAYERS {
+    if rows.len() > FONT_CANVAS_MAX_ROWS {
         let message = format!(
-            "solara: static font stamp exceeds contract rows={}/{} layers={}/{}\n",
-            row_count,
-            FONT_STAMP_MAX_ROWS,
-            layers.len(),
-            FONT_STAMP_MAX_LAYERS,
+            "solara: retained font canvas exceeds row softcap rows={}/{}\n",
+            rows.len(),
+            FONT_CANVAS_MAX_ROWS,
         );
         trueos::vsys::write_err(message.as_bytes());
         return Err(Error::Invalid);
     }
 
-    retry_busy(|| frame.begin(BACKGROUND_RGBA))?;
-    for layer in &layers {
-        let rows = layer
-            .rows
-            .iter()
-            .map(|row| SceneTextRow {
-                text: row.text.as_str(),
-                x: row.x,
-                y: row.y,
-                font_pixels: row.font_pixels,
-            })
-            .collect::<Vec<_>>();
-        retry_busy(|| {
-            frame.stamp_text_scene(
-                SCENE_FONT,
-                (FRAME_WIDTH, FRAME_HEIGHT),
-                layer.color_rgba,
-                rows.as_slice(),
-            )
-        })?;
-    }
-    retry_busy(|| frame.publish(Damage::full(frame.width(), frame.height())))?;
-    Ok(StaticTextStats {
-        rows: row_count,
-        layers: layers.len(),
+    let borrowed = rows
+        .iter()
+        .map(|row| FontCanvasRow {
+            text: row.text.as_str(),
+            x: row.x,
+            y: row.y,
+            font_pixels: row.font_pixels,
+            color_rgba: row.color_rgba,
+        })
+        .collect::<Vec<_>>();
+    retry_busy(|| frame.retain_font_canvas(SCENE_FONT, canvas, borrowed.as_slice()))?;
+    Ok(TextCanvasStats {
+        rows: rows.len(),
         glyphs,
     })
+}
+
+fn solid_quad(width: u32, height: u32, color_rgba: u32) -> SpriteQuad {
+    SpriteQuad {
+        sprite_id: 0,
+        c0: SpriteCorner::default(),
+        c1: SpriteCorner {
+            x: width as f32,
+            ..SpriteCorner::default()
+        },
+        c2: SpriteCorner {
+            x: width as f32,
+            y: height as f32,
+            ..SpriteCorner::default()
+        },
+        c3: SpriteCorner {
+            y: height as f32,
+            ..SpriteCorner::default()
+        },
+        color_rgba,
+        source_over: true,
+    }
 }
 
 fn retry_busy(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Error> {
@@ -321,48 +412,23 @@ fn retry_busy(mut operation: impl FnMut() -> Result<(), Error>) -> Result<(), Er
 }
 
 async fn render_document() -> Result<RenderDocument, Error> {
-    let mut render_once = false;
-    let mut html_tag = None;
-    let mut source_url = None;
-    let mut args = trueos::env::args();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            RENDER_ONCE_ARG => render_once = true,
-            HTML_TAG_ARG => {
-                html_tag = Some(
-                    args.next()
-                        .ok_or_else(|| invalid_startup("missing value after --trueos-html-tag"))?,
-                );
-            }
-            SOURCE_URL_ARG => {
-                source_url =
-                    Some(args.next().ok_or_else(|| {
-                        invalid_startup("missing value after --trueos-source-url")
-                    })?);
-            }
-            _ => {}
+    let launch_script = match trueos::async_fs::read_file_utf8(LAUNCH_SCRIPT_PATH).await {
+        Ok(script) => script,
+        Err(trueos::async_fs::ERR_NOT_FOUND) => {
+            return Ok(default_render_document());
         }
+        Err(code) => {
+            let message = format!("solara: runtime launch read failed code={code}\n");
+            trueos::vsys::write_err(message.as_bytes());
+            return Err(Error::Invalid);
+        }
+    };
+    let request = parse_surf_launch(launch_script.as_str())?;
+    if !valid_handoff_tag(request.tag.as_str()) {
+        return Err(invalid_startup("invalid surf handoff tag"));
     }
 
-    if !render_once && html_tag.is_none() {
-        return Ok(RenderDocument {
-            source: None,
-            source_url: String::from("trueos://solara/docs/demoui.html"),
-            handoff_path: None,
-        });
-    }
-    if !render_once {
-        return Err(invalid_startup(
-            "HTML handoff tag requires --trueos-render-once",
-        ));
-    }
-    let tag = html_tag
-        .ok_or_else(|| invalid_startup("--trueos-render-once requires --trueos-html-tag"))?;
-    if !valid_handoff_tag(tag.as_str()) {
-        return Err(invalid_startup("invalid --trueos-html-tag value"));
-    }
-
-    let path = format!("{HANDOFF_ROOT}/{tag}.html");
+    let path = format!("{HANDOFF_ROOT}/{}.html", request.tag);
     let source = trueos::async_fs::read_file_utf8(path.as_bytes())
         .await
         .map_err(|code| {
@@ -370,19 +436,52 @@ async fn render_document() -> Result<RenderDocument, Error> {
             trueos::vsys::write_err(message.as_bytes());
             Error::Invalid
         })?;
-    let source_url = source_url.unwrap_or_else(|| format!("trueos://shell2/surf/{tag}"));
     let message = format!(
-        "solara: accepted one-shot HTML handoff tag={tag} bytes={} source={}\n",
+        "solara: accepted one-shot HTML handoff tag={} bytes={} source={}\n",
+        request.tag,
         source.len(),
-        source_url,
+        request.source_url,
     );
     trueos::vsys::write_out(message.as_bytes());
 
     Ok(RenderDocument {
         source: Some(source),
-        source_url,
+        source_url: request.source_url,
         handoff_path: Some(path),
     })
+}
+
+fn parse_surf_launch(script: &str) -> Result<SurfLaunch, Error> {
+    let mut fields = script.splitn(3, '\n');
+    if fields.next() != Some(SURF_LAUNCH_HEADER) {
+        return Err(invalid_startup("unsupported runtime launch script"));
+    }
+    let tag = fields
+        .next()
+        .ok_or_else(|| invalid_startup("runtime launch script is missing a handoff tag"))?;
+    let source_url = fields
+        .next()
+        .ok_or_else(|| invalid_startup("runtime launch script is missing a source URL"))?;
+    if source_url.is_empty()
+        || source_url
+            .bytes()
+            .any(|byte| matches!(byte, b'\r' | b'\n' | 0))
+    {
+        return Err(invalid_startup("invalid runtime source URL"));
+    }
+
+    Ok(SurfLaunch {
+        tag: String::from(tag),
+        source_url: String::from(source_url),
+    })
+}
+
+fn default_render_document() -> RenderDocument {
+    RenderDocument {
+        source: None,
+        source_url: String::from("trueos://solara/docs/demoui.html"),
+        handoff_path: None,
+    }
 }
 
 fn valid_handoff_tag(tag: &str) -> bool {
