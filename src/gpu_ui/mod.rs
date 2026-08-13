@@ -11,6 +11,8 @@ pub(crate) mod input;
 mod loader;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod media_store;
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) mod picasso;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod renderer;
 mod shapes;
@@ -40,6 +42,26 @@ fn clamped_vertical_pan(
 pub(crate) fn clamped_pan_origin(origin: u32, drag: i32, canvas: u32, viewport: u32) -> u32 {
     let maximum = canvas.saturating_sub(viewport);
     (i64::from(origin) - i64::from(drag)).clamp(0, i64::from(maximum)) as u32
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) fn wheel_scroll_origin(
+    origin: u32,
+    wheel: i16,
+    default_allowed: bool,
+    canvas: u32,
+    viewport: u32,
+) -> u32 {
+    const WHEEL_STEP_PX: i32 = 24;
+    if !default_allowed {
+        return origin;
+    }
+    clamped_pan_origin(
+        origin,
+        i32::from(wheel).saturating_mul(WHEEL_STEP_PX),
+        canvas,
+        viewport,
+    )
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -75,9 +97,32 @@ impl Ui4TextDocument {
         self.document.scroll_y != before
     }
 
-    pub(crate) fn rebuild_text(&mut self) -> &Ui4TextBatch {
+    pub(crate) fn rebuild_scene<'a>(
+        &'a mut self,
+        scene: &mut picasso::PaintScene,
+        canvas: (u32, u32),
+        backdrop: trueos_helio_runtime::picasso_scene::Color,
+    ) -> Result<(picasso::PublicationStats, &'a Ui4TextBatch), picasso::BuildError> {
         html::collect_batch(&self.document, 1.0, &mut self.batch);
+        let publication = scene.rebuild(
+            &self.batch.shapes,
+            canvas,
+            backdrop,
+            self.document.scrollbar_side(),
+        )?;
+        Ok((publication, &self.batch.text))
+    }
+
+    pub(crate) fn text_batch(&self) -> &Ui4TextBatch {
         &self.batch.text
+    }
+
+    pub(crate) const fn scrollbar_side(&self) -> html::ScrollbarSide {
+        self.document.scrollbar_side()
+    }
+
+    pub(crate) fn set_visual_viewport(&mut self, origin: (u32, u32)) -> Result<(), String> {
+        self.document.set_visual_viewport(origin.0, origin.1)
     }
 
     pub(crate) fn dispatch_mouse(
@@ -120,7 +165,7 @@ pub(crate) fn ui4_document_for_html(
 
 #[cfg(test)]
 mod tests {
-    use super::{clamped_pan_origin, clamped_vertical_pan};
+    use super::{clamped_pan_origin, clamped_vertical_pan, wheel_scroll_origin};
 
     #[test]
     fn direct_vertical_pan_follows_drag_and_clamps_to_document() {
@@ -137,5 +182,15 @@ mod tests {
         assert_eq!(clamped_pan_origin(120, 40, 2_000, 720), 80);
         assert_eq!(clamped_pan_origin(0, -120, 960, 2_560), 0);
         assert_eq!(clamped_pan_origin(560, -120, 2_000, 1_440), 560);
+    }
+
+    #[test]
+    fn wheel_scroll_uses_dom_direction_and_retained_extent_clamps() {
+        assert_eq!(wheel_scroll_origin(0, -1, true, 2_000, 720), 24);
+        assert_eq!(wheel_scroll_origin(120, 1, true, 2_000, 720), 96);
+        assert_eq!(wheel_scroll_origin(8, 1, true, 2_000, 720), 0);
+        assert_eq!(wheel_scroll_origin(1_270, -1, true, 2_000, 720), 1_280);
+        assert_eq!(wheel_scroll_origin(0, -1, true, 500, 720), 0);
+        assert_eq!(wheel_scroll_origin(120, -1, false, 2_000, 720), 120);
     }
 }

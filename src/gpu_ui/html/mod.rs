@@ -30,9 +30,33 @@ pub struct Document {
     pub nodes: Vec<HtmlNode>,
     pub scroll_y: f32,
     pub content_height: f32,
+    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    scrollbar_side: ScrollbarSide,
     dom: DomArtifact,
     dom_engine: DomEngine,
     page_width: f32,
+}
+
+/// Load-time page policy for Solara's Rust-owned viewport scrollbar.
+///
+/// The document selects a side; browser chrome owns its geometry and paint.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) enum ScrollbarSide {
+    Left,
+    #[default]
+    Right,
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+impl ScrollbarSide {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
 }
 
 pub(crate) struct SelectInteraction {
@@ -45,6 +69,8 @@ impl Document {
         mut dom_engine: DomEngine,
         page_width: f32,
     ) -> Result<Self, String> {
+        #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+        let scrollbar_side = scrollbar_side_from_dom(&dom);
         let mut nodes = parse_html(&dom, &mut dom_engine)?;
         layout_document(&mut nodes, page_width, &dom.style_index);
         let content_height = document_height(&nodes);
@@ -52,6 +78,8 @@ impl Document {
             nodes,
             scroll_y: 0.0,
             content_height,
+            #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+            scrollbar_side,
             dom,
             dom_engine,
             page_width,
@@ -72,6 +100,11 @@ impl Document {
         &self.dom
     }
 
+    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) const fn scrollbar_side(&self) -> ScrollbarSide {
+        self.scrollbar_side
+    }
+
     /// Returns the same QuickJS runtime that produced this document's Parse5 DOM.
     pub fn js_mut(&mut self) -> &mut JsEngine {
         self.dom_engine.js_mut()
@@ -79,6 +112,11 @@ impl Document {
 
     pub(crate) fn dispatch_mouse(&mut self, input: MouseInput) -> Result<MouseDispatch, String> {
         input::dispatch(self.js_mut(), input)
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) fn set_visual_viewport(&mut self, x: u32, y: u32) -> Result<(), String> {
+        input::set_viewport(self.js_mut(), x, y)
     }
 
     pub fn relayout(&mut self, page_width: f32) {
@@ -145,6 +183,60 @@ impl Document {
             ]
         })
     }
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn scrollbar_side_from_dom(dom: &DomArtifact) -> ScrollbarSide {
+    let Some(html) = find_element(&dom.document, "html") else {
+        return ScrollbarSide::default();
+    };
+    let body = find_element(html, "body");
+    body.and_then(scrollbar_side_attribute)
+        .or_else(|| scrollbar_side_attribute(html))
+        .unwrap_or_default()
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn scrollbar_side_attribute(node: &rust_qjs_dom::DomNode) -> Option<ScrollbarSide> {
+    node.attribute("data-solara-scrollbar")
+        .and_then(parse_scrollbar_side)
+        .or_else(|| {
+            node.attribute("data-solara-scrollbar-side")
+                .and_then(parse_scrollbar_side)
+        })
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn parse_scrollbar_side(value: &str) -> Option<ScrollbarSide> {
+    if value.trim().eq_ignore_ascii_case("left") {
+        Some(ScrollbarSide::Left)
+    } else if value.trim().eq_ignore_ascii_case("right") {
+        Some(ScrollbarSide::Right)
+    } else {
+        None
+    }
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn find_element<'a>(
+    node: &'a rust_qjs_dom::DomNode,
+    tag: &str,
+) -> Option<&'a rust_qjs_dom::DomNode> {
+    if node
+        .tag_name
+        .as_deref()
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(tag))
+    {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_element(child, tag))
+        .or_else(|| {
+            node.content
+                .as_deref()
+                .and_then(|content| find_element(content, tag))
+        })
 }
 
 #[cfg_attr(feature = "gpu-text-only", allow(dead_code))]
@@ -360,7 +452,7 @@ pub fn collect_batch(document: &Document, scale: f32, batch: &mut RenderBatch) {
 mod parity_baseline {
     use rust_qjs_dom::DomEngine;
 
-    use super::{Document, HtmlNode, RenderBatch, collect_batch};
+    use super::{Document, HtmlNode, RenderBatch, ScrollbarSide, collect_batch};
     use crate::gpu_ui::html::node::ElementKind;
 
     fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
@@ -465,6 +557,41 @@ mod parity_baseline {
                 0x56 as f32 / 255.0,
                 1.0
             ]
+        );
+    }
+
+    #[test]
+    fn dom_selects_the_rust_owned_scrollbar_side() {
+        let parse = |source: &str| {
+            let mut engine = DomEngine::new().expect("engine starts");
+            let artifact = engine
+                .parse(source, "https://solara.test/scrollbar")
+                .expect("document parses");
+            Document::from_dom(artifact, engine, 320.0)
+                .expect("document adapts")
+                .scrollbar_side()
+        };
+
+        assert_eq!(parse("<main>default</main>"), ScrollbarSide::Right);
+        assert_eq!(
+            parse("<html data-solara-scrollbar=' LEFT '><body>x</body></html>"),
+            ScrollbarSide::Left
+        );
+        assert_eq!(
+            parse(
+                "<html data-solara-scrollbar='left'><body data-solara-scrollbar-side='right'>x</body></html>"
+            ),
+            ScrollbarSide::Right
+        );
+        assert_eq!(
+            parse("<body data-solara-scrollbar='diagonal'>x</body>"),
+            ScrollbarSide::Right
+        );
+        assert_eq!(
+            parse(
+                "<html data-solara-scrollbar='left'><body data-solara-scrollbar='diagonal'>x</body></html>"
+            ),
+            ScrollbarSide::Left
         );
     }
 

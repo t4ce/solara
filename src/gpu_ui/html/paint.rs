@@ -890,6 +890,7 @@ fn paint_svg(
                 y,
                 width,
                 height,
+                radius,
                 fill,
                 stroke,
             } => {
@@ -899,8 +900,21 @@ fn paint_svg(
                     width * sx,
                     height * sy,
                 );
-                fill_rect(shapes, r, *fill);
-                stroke_rect(shapes, r, *stroke, 2.0);
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                if *radius > 0.0 {
+                    let radius = *radius * sx.min(sy);
+                    shapes.push(ShapeInstance::rounded_rect(r, radius, *fill));
+                    shapes.push(ShapeInstance::rounded_border(r, radius, 2.0, *stroke));
+                } else {
+                    fill_rect(shapes, r, *fill);
+                    stroke_rect(shapes, r, *stroke, 2.0);
+                }
+                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+                {
+                    let _ = radius;
+                    fill_rect(shapes, r, *fill);
+                    stroke_rect(shapes, r, *stroke, 2.0);
+                }
             }
             SvgChild::Circle { cx, cy, r, fill } => {
                 shapes.push(ShapeInstance::circle(

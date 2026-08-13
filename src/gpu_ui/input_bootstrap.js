@@ -88,8 +88,8 @@
             this.screenY = Number(init.screenY) || 0;
             this.clientX = Number(init.clientX) || 0;
             this.clientY = Number(init.clientY) || 0;
-            this.pageX = this.clientX;
-            this.pageY = this.clientY;
+            this.pageX = Number.isFinite(Number(init.pageX)) ? Number(init.pageX) : this.clientX;
+            this.pageY = Number.isFinite(Number(init.pageY)) ? Number(init.pageY) : this.clientY;
             this.offsetX = this.clientX;
             this.offsetY = this.clientY;
             this.movementX = Number(init.movementX) || 0;
@@ -241,6 +241,24 @@
     G.WheelEvent = WheelEvent;
     G.EventTarget = EventTarget;
 
+    const viewportState = { x: 0, y: 0 };
+    const viewportOffset = (axis) => ({
+        configurable: true,
+        enumerable: true,
+        get: () => viewportState[axis],
+    });
+    Object.defineProperties(G, {
+        scrollX: viewportOffset('x'),
+        scrollY: viewportOffset('y'),
+        pageXOffset: viewportOffset('x'),
+        pageYOffset: viewportOffset('y'),
+    });
+    G.__solaraSetViewport = (x, y) => {
+        viewportState.x = Math.max(0, Number(x) || 0);
+        viewportState.y = Math.max(0, Number(y) || 0);
+        return { x: viewportState.x, y: viewportState.y };
+    };
+
     G.__solaraDispatchMouse = (payload) => {
         payload = payload || {};
         const type = String(payload.type || 'mousemove');
@@ -253,6 +271,8 @@
             screenY: payload.screenY,
             clientX: payload.clientX,
             clientY: payload.clientY,
+            pageX: payload.pageX,
+            pageY: payload.pageY,
             movementX: payload.movementX,
             movementY: payload.movementY,
             button: payload.button,

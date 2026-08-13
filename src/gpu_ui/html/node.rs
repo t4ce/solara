@@ -222,6 +222,7 @@ pub enum SvgChild {
         y: f32,
         width: f32,
         height: f32,
+        radius: f32,
         fill: [f32; 4],
         stroke: [f32; 4],
     },

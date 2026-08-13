@@ -203,6 +203,7 @@ impl NodeParser<'_> {
                     y: number_attribute(child, "y", 0.0),
                     width: number_attribute(child, "width", 0.0),
                     height: number_attribute(child, "height", 0.0),
+                    radius: number_attribute(child, "rx", 0.0),
                     fill: color_attribute(child, "fill", [0.85, 0.85, 0.85, 1.0]),
                     stroke: color_attribute(child, "stroke", [0.2, 0.2, 0.2, 1.0]),
                 }),
@@ -317,7 +318,7 @@ mod tests {
     use rust_qjs_dom::DomEngine;
 
     use super::parse_html;
-    use crate::gpu_ui::html::node::{ElementKind, HtmlNode};
+    use crate::gpu_ui::html::node::{ElementKind, HtmlNode, SvgChild};
 
     fn parse_source(source: &str) -> Vec<HtmlNode> {
         let mut engine = DomEngine::new().expect("QuickJS DOM engine starts");
@@ -379,6 +380,21 @@ mod tests {
             panic!("expected specialized video");
         };
         assert_eq!((*width, *height), (1920.0, 1080.0));
+    }
+
+    #[test]
+    fn preserves_svg_rounded_rect_radius_for_backend_lowering() {
+        let nodes = parse_source(
+            "<svg width='100' height='60'><rect x='1' y='2' width='80' height='40' rx='8' fill='#fff' stroke='#000'/></svg>",
+        );
+        let svg = find_tag(&nodes, "svg").expect("svg is present");
+        let ElementKind::Svg { children, .. } = &svg.kind else {
+            panic!("expected specialized svg");
+        };
+        assert!(matches!(
+            children.as_slice(),
+            [SvgChild::Rect { radius: 8.0, .. }]
+        ));
     }
 
     fn collect_tags<'a>(nodes: &'a [HtmlNode], tags: &mut Vec<&'a str>) {
