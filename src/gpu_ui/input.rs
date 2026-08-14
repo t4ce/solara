@@ -125,10 +125,18 @@ pub(crate) fn install(js: &mut JsEngine) -> Result<(), String> {
 }
 
 #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
-pub(crate) fn set_viewport(js: &mut JsEngine, x: u32, y: u32) -> Result<(), String> {
-    js.call_global_json("__solaraSetViewport", &[json!(x), json!(y)])
-        .map(|_| ())
-        .map_err(|error| format!("failed to update Solara's visual viewport: {error}"))
+pub(crate) fn set_viewport(
+    js: &mut JsEngine,
+    x: u32,
+    y: u32,
+    zoom_percent: u32,
+) -> Result<(), String> {
+    js.call_global_json(
+        "__solaraSetViewport",
+        &[json!(x), json!(y), json!(zoom_percent)],
+    )
+    .map(|_| ())
+    .map_err(|error| format!("failed to update Solara's visual viewport: {error}"))
 }
 
 pub(crate) fn dispatch(js: &mut JsEngine, input: MouseInput) -> Result<MouseDispatch, String> {
@@ -247,7 +255,7 @@ mod tests {
     fn wheel_observes_page_coordinates_and_the_pre_default_viewport() {
         let mut js = JsEngine::new().expect("QuickJS starts");
         install(&mut js).expect("mouse host installs");
-        set_viewport(&mut js, 0, 240).expect("viewport state installs");
+        set_viewport(&mut js, 0, 240, 250).expect("viewport state installs");
         js.eval_void(
             r#"
             globalThis.receivedWheel = null;
@@ -257,6 +265,7 @@ mod tests {
                     pageY: event.pageY,
                     deltaY: event.deltaY,
                     scrollY: window.scrollY,
+                    scale: window.visualViewport.scale,
                 };
                 event.preventDefault();
             });
@@ -281,6 +290,7 @@ mod tests {
                 "pageY": 320,
                 "deltaY": 24,
                 "scrollY": 240,
+                "scale": 2.5,
             })
         );
     }

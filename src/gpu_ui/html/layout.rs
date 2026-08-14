@@ -161,7 +161,14 @@ fn layout_node(
             style_index,
             Some(text_style),
         ),
-        ElementKind::Image { height, .. } => ctx.place_block(*height + 8.0),
+        ElementKind::Image { width, height, .. } => {
+            let intrinsic_width = width.max(1.0);
+            let display_width = intrinsic_width.min(ctx.content_width()).max(1.0);
+            let display_height = display_width * height.max(1.0) / intrinsic_width;
+            let mut rect = ctx.place_block(display_height);
+            rect.width = display_width;
+            rect
+        }
         ElementKind::Video { width, height } => {
             let intrinsic_width = width.max(1.0);
             let display_width = intrinsic_width.min(ctx.content_width()).max(1.0);

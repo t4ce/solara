@@ -1,13 +1,13 @@
 //! TRUEOS Blueprint entry point for Solara's retained Picasso/UI4 pass.
 
 use trueos_helio_runtime::picasso_scene::{
-    Color, FontFace as SceneFontFace, FontSlant, LoweredCommand,
+    Color, FontFace as SceneFontFace, FontSlant, ImageResourceRef, LoweredCommand,
 };
 
 use trueos::ui4_scene::{
-    CursorSource, Damage, Error, Font, FontCanvasRow, Frame, POINTER_BUTTON_MIDDLE,
+    CursorIcon, CursorSource, Damage, Error, Font, FontCanvasRow, Frame, POINTER_BUTTON_MIDDLE,
     POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PanPhase, PointerEvent, SpriteCorner,
-    SpriteQuad,
+    SpriteQuad, output_dimensions,
 };
 
 use crate::gpu_ui::input::{MouseEventKind, MouseInput};
@@ -26,6 +26,11 @@ const TEXT_CANVAS_MAX_HEIGHT: u32 = 4_096;
 const FONT_CANVAS_MAX_ROWS: usize = 256;
 const TEXT_ROW_MAX_BYTES: usize = 1_024;
 const TEXT_CANVAS_MAX_GLYPHS: usize = 4_096;
+const ZOOM_MIN_PERCENT: u32 = 10;
+const ZOOM_MAX_PERCENT: u32 = 500;
+const ZOOM_STEP_PERCENT: u32 = 10;
+const MIN_FRAME_WIDTH: u32 = 320;
+const MIN_FRAME_HEIGHT: u32 = 240;
 const BACKGROUND: Color = Color::rgba(250, 250, 250, 255);
 // Solara lays out every current text run with the same monospaced metrics as
 // its bundled desktop face. Keep the UI4 scene on that face as well instead
@@ -49,9 +54,25 @@ struct SolaraView {
     paint_scene: crate::gpu_ui::picasso::PaintScene,
     canvas: (u32, u32),
     origin: (u32, u32),
+    zoom_percent: u32,
     active_pan_source: Option<CursorSource>,
+    resize_drag: Option<ResizeDrag>,
     font_canvas_dirty: bool,
     needs_present: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ResizeDrag {
+    source: CursorSource,
+    start_screen: (u32, u32),
+    start_extent: (u32, u32),
+    maximum_extent: (u32, u32),
+    pending_extent: (u32, u32),
+}
+
+struct PendingImage {
+    request: crate::gpu_ui::ImageRequest,
+    resource: ImageResourceRef,
 }
 
 struct OwnedTextRow {
@@ -69,24 +90,53 @@ struct TextCanvasStats {
 }
 
 impl SolaraView {
+    fn logical_viewport(&self) -> (u32, u32) {
+        crate::gpu_ui::picasso::logical_viewport_extent(
+            (self.frame.width(), self.frame.height()),
+            self.zoom_percent,
+        )
+    }
+
     fn clamp_origin(&mut self) -> bool {
         let previous = self.origin;
+        let logical_viewport = self.logical_viewport();
         self.origin.0 = self
             .origin
             .0
-            .min(self.canvas.0.saturating_sub(self.frame.width()));
+            .min(self.canvas.0.saturating_sub(logical_viewport.0));
         self.origin.1 = self
             .origin
             .1
-            .min(self.canvas.1.saturating_sub(self.frame.height()));
+            .min(self.canvas.1.saturating_sub(logical_viewport.1));
         self.origin != previous
     }
 
     fn sync_dom_viewport(&mut self) {
-        if let Err(error) = self.document.set_visual_viewport(self.origin) {
+        if let Err(error) = self
+            .document
+            .set_visual_viewport(self.origin, self.zoom_percent)
+        {
             let message = format!("solara: QuickJS viewport sync failed: {error}\n");
             trueos::vsys::write_err(message.as_bytes());
         }
+    }
+
+    fn resize_frame(&mut self, width: u32, height: u32, reason: &str) -> Result<(), Error> {
+        if (width, height) == (self.frame.width(), self.frame.height()) {
+            return Ok(());
+        }
+        let previous = (self.frame.width(), self.frame.height());
+        retry_busy(|| self.frame.resize(width, height))?;
+        self.font_canvas_dirty = true;
+        self.needs_present = true;
+        let _ = self.clamp_origin();
+        self.sync_dom_viewport();
+        let message = format!(
+            "solara: frame resize accepted reason={reason} old={}x{} new={}x{} zoom={}%% projection=top-center-1to1-at-100\n",
+            previous.0, previous.1, width, height, self.zoom_percent,
+        );
+        trueos::vsys::write_out(message.as_bytes());
+        Ok(())
     }
 
     fn ensure_font_canvas(&mut self) -> Result<(), Error> {
@@ -103,12 +153,7 @@ impl SolaraView {
             if event.width == self.frame.width() && event.height == self.frame.height() {
                 continue;
             }
-            retry_busy(|| self.frame.resize(event.width, event.height))?;
-            self.font_canvas_dirty = true;
-            self.needs_present = true;
-            if self.clamp_origin() {
-                self.sync_dom_viewport();
-            }
+            self.resize_frame(event.width, event.height, "ui4-maximize-or-restore")?;
         }
         while let Some(event) = self.frame.take_pan_event()? {
             match event.phase {
@@ -119,18 +164,20 @@ impl SolaraView {
                     self.active_pan_source = Some(event.source);
                 }
                 PanPhase::Update if self.active_pan_source == Some(event.source) => {
+                    let logical_dx = physical_delta_to_logical(event.dx, self.zoom_percent);
+                    let logical_dy = physical_delta_to_logical(event.dy, self.zoom_percent);
                     let next = (
                         crate::gpu_ui::clamped_pan_origin(
                             self.origin.0,
-                            event.dx,
+                            logical_dx,
                             self.canvas.0,
-                            self.frame.width(),
+                            self.logical_viewport().0,
                         ),
                         crate::gpu_ui::clamped_pan_origin(
                             self.origin.1,
-                            event.dy,
+                            logical_dy,
                             self.canvas.1,
-                            self.frame.height(),
+                            self.logical_viewport().1,
                         ),
                     );
                     if next != self.origin {
@@ -158,15 +205,33 @@ impl SolaraView {
                 .and_then(|route| route.keyboard)
                 .map(|keyboard| keyboard.modifiers)
                 .unwrap_or(0);
-            let pre_default_origin = self.origin;
-            let wheel_default =
-                dispatch_pointer_event(&mut self.document, event, modifiers, pre_default_origin);
+            if self.handle_resize_pointer(event)? {
+                continue;
+            }
+            let (client, page) = self.pointer_css_coordinates(event);
+            let movement = (
+                physical_delta_to_logical(event.dx, self.zoom_percent) as f32,
+                physical_delta_to_logical(event.dy, self.zoom_percent) as f32,
+            );
+            let wheel_default = dispatch_pointer_event(
+                &mut self.document,
+                event,
+                modifiers,
+                client,
+                page,
+                movement,
+            );
+            if event.wheel != 0 && modifiers & 0x11 != 0 && wheel_default {
+                self.zoom_at(event.local_x, event.local_y, event.wheel);
+                continue;
+            }
+            let logical_viewport = self.logical_viewport();
             let next = crate::gpu_ui::wheel_scroll_origin(
                 self.origin.1,
                 event.wheel,
                 wheel_default,
                 self.canvas.1,
-                self.frame.height(),
+                logical_viewport.1,
             );
             if next != self.origin.1 {
                 self.origin.1 = next;
@@ -177,6 +242,115 @@ impl SolaraView {
         Ok(())
     }
 
+    fn pointer_css_coordinates(&self, event: PointerEvent) -> ((f32, f32), (f32, f32)) {
+        let scale = self.zoom_percent as f32 / 100.0;
+        let scaled_width = (self.canvas.0 as f32 * scale).ceil() as u32;
+        let x_offset = self.frame.width().saturating_sub(scaled_width) / 2;
+        let client = (
+            (event.local_x as f32 - x_offset as f32) / scale,
+            event.local_y as f32 / scale,
+        );
+        let page = (
+            client.0 + self.origin.0 as f32,
+            client.1 + self.origin.1 as f32,
+        );
+        (client, page)
+    }
+
+    fn zoom_at(&mut self, local_x: i32, local_y: i32, wheel: i16) {
+        let next = if wheel > 0 {
+            self.zoom_percent.saturating_add(ZOOM_STEP_PERCENT)
+        } else {
+            self.zoom_percent.saturating_sub(ZOOM_STEP_PERCENT)
+        }
+        .clamp(ZOOM_MIN_PERCENT, ZOOM_MAX_PERCENT);
+        if next == self.zoom_percent {
+            return;
+        }
+        let old_zoom = self.zoom_percent;
+        let old_scale = old_zoom as f64 / 100.0;
+        let old_width = (self.canvas.0 as f64 * old_scale).ceil() as u32;
+        let old_offset = self.frame.width().saturating_sub(old_width) / 2;
+        let anchor_x =
+            f64::from(self.origin.0) + (f64::from(local_x) - f64::from(old_offset)) / old_scale;
+        let anchor_y = f64::from(self.origin.1) + f64::from(local_y) / old_scale;
+
+        self.zoom_percent = next;
+        let new_scale = next as f64 / 100.0;
+        let new_width = (self.canvas.0 as f64 * new_scale).ceil() as u32;
+        let new_offset = self.frame.width().saturating_sub(new_width) / 2;
+        self.origin = (
+            (anchor_x - (f64::from(local_x) - f64::from(new_offset)) / new_scale)
+                .round()
+                .max(0.0) as u32,
+            (anchor_y - f64::from(local_y) / new_scale).round().max(0.0) as u32,
+        );
+        let _ = self.clamp_origin();
+        self.needs_present = true;
+        self.sync_dom_viewport();
+        let message = format!(
+            "solara: viewport zoom old={}%% new={}%% origin={},{} frame={}x{}\n",
+            old_zoom,
+            next,
+            self.origin.0,
+            self.origin.1,
+            self.frame.width(),
+            self.frame.height(),
+        );
+        trueos::vsys::write_out(message.as_bytes());
+    }
+
+    fn handle_resize_pointer(&mut self, event: PointerEvent) -> Result<bool, Error> {
+        if !self.document.resize_handle_enabled() {
+            return Ok(false);
+        }
+        if let Some(mut drag) = self.resize_drag {
+            if drag.source != event.source {
+                return Ok(false);
+            }
+            drag.pending_extent = resize_drag_extent(drag, event.x, event.y);
+            self.resize_drag = Some(drag);
+            if event.buttons_released & POINTER_BUTTON_PRIMARY != 0 {
+                self.resize_drag = None;
+                self.frame
+                    .set_cursor_icon_for(event.source, CursorIcon::Default)?;
+                self.resize_frame(
+                    drag.pending_extent.0,
+                    drag.pending_extent.1,
+                    "dom-bottom-right-handle",
+                )?;
+            }
+            return Ok(true);
+        }
+
+        let over_handle = resize_handle_contains(
+            event.local_x,
+            event.local_y,
+            self.frame.width(),
+            self.frame.height(),
+        );
+        self.frame.set_cursor_icon_for(
+            event.source,
+            if over_handle {
+                CursorIcon::ResizeDiagonal
+            } else {
+                CursorIcon::Default
+            },
+        )?;
+        if over_handle && event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0 {
+            let maximum_extent = output_dimensions()?;
+            self.resize_drag = Some(ResizeDrag {
+                source: event.source,
+                start_screen: (event.x, event.y),
+                start_extent: (self.frame.width(), self.frame.height()),
+                maximum_extent,
+                pending_extent: (self.frame.width(), self.frame.height()),
+            });
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     fn present_viewport(&mut self) -> Result<usize, Error> {
         if self.clamp_origin() {
             self.sync_dom_viewport();
@@ -184,7 +358,11 @@ impl SolaraView {
         self.ensure_font_canvas()?;
         let commands = self
             .paint_scene
-            .lower(self.origin, (self.frame.width(), self.frame.height()))
+            .lower_zoomed(
+                self.origin,
+                (self.frame.width(), self.frame.height()),
+                self.zoom_percent,
+            )
             .map_err(|error| invalid_picasso("viewport lower", error))?;
         let mut quads = Vec::with_capacity(commands.len());
         for command in commands {
@@ -211,11 +389,42 @@ impl SolaraView {
                     (x, y),
                     (source_x, source_y),
                     (width, height),
+                    (
+                        zoomed_extent(width, self.zoom_percent),
+                        zoomed_extent(height, self.zoom_percent),
+                    ),
                 )?),
                 // Shadow lookup rows are retained for FontKernel resolution;
                 // FontCanvas remains the sole visual text pass until UI4 can
                 // prove mixed sprite/retained-text release ordering.
                 LoweredCommand::FontLookup { .. } => {}
+                LoweredCommand::Image {
+                    x,
+                    y,
+                    width,
+                    height,
+                    source_x,
+                    source_y,
+                    source_width,
+                    source_height,
+                    resource,
+                    opacity,
+                    ..
+                } => {
+                    let image = self
+                        .paint_scene
+                        .resolve_image(resource)
+                        .ok_or(Error::Invalid)?;
+                    quads.push(image_quad(
+                        image.sprite_id,
+                        (image.width, image.height),
+                        (u32::from(x), u32::from(y)),
+                        (u32::from(width), u32::from(height)),
+                        (u32::from(source_x), u32::from(source_y)),
+                        (u32::from(source_width), u32::from(source_height)),
+                        opacity,
+                    )?);
+                }
             }
         }
         retry_busy(|| self.frame.begin_sprite_frame(BACKGROUND.to_u32_le()))?;
@@ -233,7 +442,7 @@ pub(crate) fn run() -> ! {
     match trueos::async_fs::block_on(present_text_frame()) {
         Ok(view) => {
             trueos::vsys::write_out(
-                b"solara: retained Picasso document + FontKernel canvas visible; wheel/middle-pan and DOM-configured scrollbar active\n",
+                b"solara: retained Picasso document + FontKernel canvas visible; wheel/middle-pan, Ctrl+wheel zoom, and DOM-configured scrollbar/resize handle active\n",
             );
             resident_view_loop(view)
         }
@@ -319,23 +528,42 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         FRAME_WIDTH.min(TEXT_CANVAS_MAX_WIDTH),
         (content_height.ceil() as u32).clamp(1, TEXT_CANVAS_MAX_HEIGHT),
     );
+    let image_requests = ui4_document.image_requests();
+    let mut paint_scene = crate::gpu_ui::picasso::PaintScene::new();
+    let mut pending_images = Vec::with_capacity(image_requests.len());
+    for request in image_requests {
+        let resource = paint_scene
+            .request_image(&request)
+            .map_err(|error| invalid_picasso("image resource request", error))?;
+        pending_images.push(PendingImage { request, resource });
+    }
     let mut view = SolaraView {
         frame: Frame::open(160, 180, FRAME_WIDTH, FRAME_HEIGHT)?,
         document: ui4_document,
-        paint_scene: crate::gpu_ui::picasso::PaintScene::new(),
+        paint_scene,
         canvas,
         origin: (0, 0),
+        zoom_percent: 100,
         active_pan_source: None,
+        resize_drag: None,
         font_canvas_dirty: false,
         needs_present: true,
     };
-    let scene_stats = view
+    let mut scene_stats = view
         .document
         .rebuild_scene(&mut view.paint_scene, view.canvas, BACKGROUND)
         .map_err(|error| invalid_picasso("DOM scene publication", error))?;
     let stats = build_text_canvas(&mut view.frame, view.canvas, &view.paint_scene)?;
     view.sync_dom_viewport();
-    let lowered_commands = view.present_viewport()?;
+    let mut lowered_commands = view.present_viewport()?;
+    let (loaded_images, updated_scene_stats) =
+        load_pending_images(&mut view, pending_images.as_slice()).await;
+    if let Some(updated_scene_stats) = updated_scene_stats {
+        scene_stats = updated_scene_stats;
+    }
+    if loaded_images != 0 {
+        lowered_commands = view.present_viewport()?;
+    }
     if let Some(path) = document.handoff_path.as_deref() {
         match trueos::async_fs::remove(path.as_bytes()).await {
             Ok(()) => {
@@ -349,11 +577,13 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         }
     }
     let summary = format!(
-        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} font_lookup_rows={} lowered_commands={} text_rows={} glyphs={} fallback_style_mismatches={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} font=inconsolata source={}\n",
+        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} font_lookup_rows={} image_rows={} loaded_images={} lowered_commands={} text_rows={} glyphs={} fallback_style_mismatches={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} resize_handle={} zoom={}%% font=inconsolata source={}\n",
         scene_stats.epoch,
         scene_stats.logical_rows,
         scene_stats.shape_rows,
         scene_stats.font_lookup_rows,
+        scene_stats.image_rows,
+        loaded_images,
         lowered_commands,
         stats.rows,
         stats.glyphs,
@@ -364,36 +594,167 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         view.canvas.1,
         content_height,
         view.document.scrollbar_side().as_str(),
+        u8::from(view.document.resize_handle_enabled()),
+        view.zoom_percent,
         document.source_url,
     );
     trueos::vsys::write_out(summary.as_bytes());
     Ok(view)
 }
 
+async fn load_pending_images(
+    view: &mut SolaraView,
+    pending: &[PendingImage],
+) -> (usize, Option<crate::gpu_ui::picasso::PublicationStats>) {
+    let mut loaded = 0usize;
+    let mut latest_scene_stats = None;
+    for pending in pending {
+        let result = fetch_and_decode_image(pending.request.source_url.as_str()).await;
+        let decoded = match result {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                view.paint_scene.image_failed(pending.resource);
+                let message = format!(
+                    "solara: asset failed node={} source={} error={}\n",
+                    pending.request.node_id, pending.request.source_url, error,
+                );
+                trueos::vsys::write_err(message.as_bytes());
+                continue;
+            }
+        };
+        let Some(sprite_id) = pending
+            .resource
+            .0
+            .slot
+            .checked_add(1)
+            .filter(|id| *id != u32::MAX)
+        else {
+            view.paint_scene.image_failed(pending.resource);
+            continue;
+        };
+        if let Err(error) = view.frame.upload_sprite_rgba8(
+            sprite_id,
+            decoded.info.width,
+            decoded.info.height,
+            decoded.rgba.as_slice(),
+        ) {
+            view.paint_scene.image_failed(pending.resource);
+            let message = format!(
+                "solara: asset sprite upload failed node={} sprite={} error={error:?}\n",
+                pending.request.node_id, sprite_id,
+            );
+            trueos::vsys::write_err(message.as_bytes());
+            continue;
+        }
+        let ready = match view.paint_scene.image_ready(
+            pending.resource,
+            decoded.info.width,
+            decoded.info.height,
+        ) {
+            Ok(ready) => ready,
+            Err(error) => {
+                view.paint_scene.image_failed(pending.resource);
+                let message = format!(
+                    "solara: asset SceneDB transition failed node={} error={error:?}\n",
+                    pending.request.node_id,
+                );
+                trueos::vsys::write_err(message.as_bytes());
+                continue;
+            }
+        };
+        let scene_stats =
+            match view
+                .document
+                .rebuild_scene(&mut view.paint_scene, view.canvas, BACKGROUND)
+            {
+                Ok(scene_stats) => scene_stats,
+                Err(error) => {
+                    view.paint_scene.image_failed(pending.resource);
+                    let message = format!(
+                        "solara: asset Picasso publication failed node={} error={error:?}\n",
+                        pending.request.node_id,
+                    );
+                    trueos::vsys::write_err(message.as_bytes());
+                    continue;
+                }
+            };
+        latest_scene_stats = Some(scene_stats);
+        view.needs_present = true;
+        loaded = loaded.saturating_add(1);
+        let message = format!(
+            "solara: asset SceneDB ready node={} resource={}:{} revision={} sprite={} intrinsic={}x{} backend={:?} source={}\n",
+            pending.request.node_id,
+            ready.resource.0.slot,
+            ready.resource.0.generation,
+            ready.revision,
+            ready.sprite_id,
+            ready.width,
+            ready.height,
+            decoded.info.backend,
+            pending.request.source_url,
+        );
+        trueos::vsys::write_out(message.as_bytes());
+    }
+    (loaded, latest_scene_stats)
+}
+
+async fn fetch_and_decode_image(source: &str) -> Result<trueos::vmedia::DecodedImage, String> {
+    const FETCH_TIMEOUT_MS: u64 = 30_000;
+    const MAX_ENCODED_BYTES: usize = 16 * 1024 * 1024;
+    if !(source.starts_with("https://") || source.starts_with("http://")) {
+        return Err(String::from("V1 accepts HTTP(S) image assets only"));
+    }
+    let operation = trueos::netfs::fetch_bytes(source.as_bytes())
+        .map_err(|code| format!("fetch start code={code}"))?;
+    let wait = trueos::netfs::fetch_bytes_wait(operation, FETCH_TIMEOUT_MS);
+    if wait != 0 {
+        let _ = trueos::netfs::fetch_bytes_discard(operation);
+        return Err(format!("fetch wait code={wait}"));
+    }
+    let encoded = trueos::netfs::fetch_bytes_read(operation)
+        .map_err(|code| format!("fetch read code={code}"));
+    let _ = trueos::netfs::fetch_bytes_discard(operation);
+    let encoded = encoded?;
+    if encoded.is_empty() || encoded.len() > MAX_ENCODED_BYTES {
+        return Err(format!("encoded length rejected bytes={}", encoded.len()));
+    }
+    let format = infer_image_format(encoded.as_slice())
+        .ok_or_else(|| String::from("unsupported raster signature"))?;
+    trueos::vmedia::decode(format, encoded.as_slice())
+        .await
+        .map_err(|code| format!("vmedia decode code={code}"))
+}
+
+fn infer_image_format(bytes: &[u8]) -> Option<trueos::vmedia::ImageFormat> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(trueos::vmedia::ImageFormat::Png)
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some(trueos::vmedia::ImageFormat::Jpeg)
+    } else if bytes.starts_with(b"BM") {
+        Some(trueos::vmedia::ImageFormat::Bmp)
+    } else {
+        None
+    }
+}
+
 fn dispatch_pointer_event(
     document: &mut crate::gpu_ui::Ui4TextDocument,
     event: PointerEvent,
     modifiers: u8,
-    page_origin: (u32, u32),
+    client: (f32, f32),
+    page: (f32, f32),
+    movement: (f32, f32),
 ) -> bool {
     let base = |kind| {
-        MouseInput::at(
-            kind,
-            event.local_x as f32,
-            event.local_y as f32,
-            event.buttons_down,
-        )
-        .with_page(
-            event.local_x as f32 + page_origin.0 as f32,
-            event.local_y as f32 + page_origin.1 as f32,
-        )
-        .with_screen(event.x as f32, event.y as f32)
-        .with_modifiers(
-            modifiers & 0x11 != 0,
-            modifiers & 0x22 != 0,
-            modifiers & 0x44 != 0,
-            modifiers & 0x88 != 0,
-        )
+        MouseInput::at(kind, client.0, client.1, event.buttons_down)
+            .with_page(page.0, page.1)
+            .with_screen(event.x as f32, event.y as f32)
+            .with_modifiers(
+                modifiers & 0x11 != 0,
+                modifiers & 0x22 != 0,
+                modifiers & 0x44 != 0,
+                modifiers & 0x88 != 0,
+            )
     };
     let mut send = |input| match document.dispatch_mouse(input) {
         Ok(outcome) => Some(outcome),
@@ -405,7 +766,7 @@ fn dispatch_pointer_event(
     };
 
     if event.dx != 0 || event.dy != 0 {
-        let _ = send(base(MouseEventKind::Move).with_movement(event.dx as f32, event.dy as f32));
+        let _ = send(base(MouseEventKind::Move).with_movement(movement.0, movement.1));
     }
     let wheel_default = event.wheel != 0
         && send(base(MouseEventKind::Wheel).with_wheel(0.0, -f32::from(event.wheel) * 24.0))
@@ -424,6 +785,42 @@ fn dispatch_pointer_event(
         }
     }
     wheel_default
+}
+
+fn resize_handle_contains(local_x: i32, local_y: i32, width: u32, height: u32) -> bool {
+    let size = crate::gpu_ui::picasso::RESIZE_HANDLE_SIZE
+        .min(width)
+        .min(height) as i32;
+    local_x >= width as i32 - size
+        && local_y >= height as i32 - size
+        && local_x < width as i32
+        && local_y < height as i32
+}
+
+fn resize_drag_extent(drag: ResizeDrag, screen_x: u32, screen_y: u32) -> (u32, u32) {
+    let maximum_width = drag.maximum_extent.0.max(MIN_FRAME_WIDTH);
+    let maximum_height = drag.maximum_extent.1.max(MIN_FRAME_HEIGHT);
+    let width = i64::from(drag.start_extent.0)
+        .saturating_add(i64::from(screen_x) - i64::from(drag.start_screen.0))
+        .clamp(i64::from(MIN_FRAME_WIDTH), i64::from(maximum_width));
+    let height = i64::from(drag.start_extent.1)
+        .saturating_add(i64::from(screen_y) - i64::from(drag.start_screen.1))
+        .clamp(i64::from(MIN_FRAME_HEIGHT), i64::from(maximum_height));
+    (width as u32, height as u32)
+}
+
+fn zoomed_extent(value: u32, zoom_percent: u32) -> u32 {
+    ((u64::from(value)
+        .saturating_mul(u64::from(zoom_percent))
+        .saturating_add(50)
+        / 100)
+        .min(u64::from(u32::MAX)) as u32)
+        .max(1)
+}
+
+fn physical_delta_to_logical(delta: i32, zoom_percent: u32) -> i32 {
+    let scaled = i64::from(delta).saturating_mul(100) / i64::from(zoom_percent.max(1));
+    scaled.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 fn build_text_canvas(
@@ -541,23 +938,96 @@ fn solid_quad(x: u32, y: u32, width: u32, height: u32, color_rgba: u32) -> Sprit
     }
 }
 
+fn image_quad(
+    sprite_id: u32,
+    image_size: (u32, u32),
+    destination: (u32, u32),
+    destination_size: (u32, u32),
+    source: (u32, u32),
+    source_size: (u32, u32),
+    opacity: u8,
+) -> Result<SpriteQuad, Error> {
+    if sprite_id == 0
+        || image_size.0 == 0
+        || image_size.1 == 0
+        || destination_size.0 == 0
+        || destination_size.1 == 0
+        || source_size.0 == 0
+        || source_size.1 == 0
+        || source
+            .0
+            .checked_add(source_size.0)
+            .is_none_or(|right| right > image_size.0)
+        || source
+            .1
+            .checked_add(source_size.1)
+            .is_none_or(|bottom| bottom > image_size.1)
+    {
+        return Err(Error::Invalid);
+    }
+    let left = destination.0 as f32;
+    let top = destination.1 as f32;
+    let right = left + destination_size.0 as f32;
+    let bottom = top + destination_size.1 as f32;
+    let u0 = source.0 as f32 / image_size.0 as f32;
+    let v0 = source.1 as f32 / image_size.1 as f32;
+    let u1 = (source.0 + source_size.0) as f32 / image_size.0 as f32;
+    let v1 = (source.1 + source_size.1) as f32 / image_size.1 as f32;
+    Ok(SpriteQuad {
+        sprite_id,
+        c0: SpriteCorner {
+            x: left,
+            y: top,
+            u: u0,
+            v: v0,
+        },
+        c1: SpriteCorner {
+            x: right,
+            y: top,
+            u: u1,
+            v: v0,
+        },
+        c2: SpriteCorner {
+            x: right,
+            y: bottom,
+            u: u1,
+            v: v1,
+        },
+        c3: SpriteCorner {
+            x: left,
+            y: bottom,
+            u: u0,
+            v: v1,
+        },
+        color_rgba: u32::from_le_bytes([255, 255, 255, opacity]),
+        source_over: true,
+    })
+}
+
 fn font_canvas_quad(
     frame: &Frame,
     canvas: (u32, u32),
     destination: (u32, u32),
     source: (u32, u32),
-    size: (u32, u32),
+    source_size: (u32, u32),
+    destination_size: (u32, u32),
 ) -> Result<SpriteQuad, Error> {
     let mut quad = frame.font_canvas_quad(canvas, source)?;
-    let source_right = source.0.checked_add(size.0).ok_or(Error::Invalid)?;
-    let source_bottom = source.1.checked_add(size.1).ok_or(Error::Invalid)?;
-    if source_right > canvas.0 || source_bottom > canvas.1 || size.0 == 0 || size.1 == 0 {
+    let source_right = source.0.checked_add(source_size.0).ok_or(Error::Invalid)?;
+    let source_bottom = source.1.checked_add(source_size.1).ok_or(Error::Invalid)?;
+    if source_right > canvas.0
+        || source_bottom > canvas.1
+        || source_size.0 == 0
+        || source_size.1 == 0
+        || destination_size.0 == 0
+        || destination_size.1 == 0
+    {
         return Err(Error::Invalid);
     }
     let left = destination.0 as f32;
     let top = destination.1 as f32;
-    let right = left + size.0 as f32;
-    let bottom = top + size.1 as f32;
+    let right = left + destination_size.0 as f32;
+    let bottom = top + destination_size.1 as f32;
     let u0 = source.0 as f32 / canvas.0 as f32;
     let v0 = source.1 as f32 / canvas.1 as f32;
     let u1 = source_right as f32 / canvas.0 as f32;

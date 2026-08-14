@@ -32,6 +32,8 @@ pub struct Document {
     pub content_height: f32,
     #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
     scrollbar_side: ScrollbarSide,
+    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    resize_handle: bool,
     dom: DomArtifact,
     dom_engine: DomEngine,
     page_width: f32,
@@ -63,6 +65,14 @@ pub(crate) struct SelectInteraction {
     pub(crate) selected: Option<usize>,
 }
 
+#[derive(Clone, Debug)]
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) struct ImageRequest {
+    pub(crate) node_id: u32,
+    pub(crate) source_url: String,
+    pub(crate) rect: crate::gpu_ui::geometry::Rect,
+}
+
 impl Document {
     pub fn from_dom(
         dom: DomArtifact,
@@ -71,6 +81,8 @@ impl Document {
     ) -> Result<Self, String> {
         #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
         let scrollbar_side = scrollbar_side_from_dom(&dom);
+        #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+        let resize_handle = resize_handle_from_dom(&dom);
         let mut nodes = parse_html(&dom, &mut dom_engine)?;
         layout_document(&mut nodes, page_width, &dom.style_index);
         let content_height = document_height(&nodes);
@@ -80,6 +92,8 @@ impl Document {
             content_height,
             #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
             scrollbar_side,
+            #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+            resize_handle,
             dom,
             dom_engine,
             page_width,
@@ -105,6 +119,33 @@ impl Document {
         self.scrollbar_side
     }
 
+    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) const fn resize_handle_enabled(&self) -> bool {
+        self.resize_handle
+    }
+
+    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) fn image_requests(&self) -> Vec<ImageRequest> {
+        let mut requests = Vec::new();
+        collect_image_requests(&self.nodes, &mut requests);
+        let Ok(document_url) = url::Url::parse(self.dom.source.url.as_str()) else {
+            return requests;
+        };
+        let base = self
+            .dom
+            .asset_index
+            .base_href
+            .as_deref()
+            .and_then(|href| document_url.join(href).ok())
+            .unwrap_or(document_url);
+        for request in &mut requests {
+            if let Ok(url) = base.join(request.source_url.as_str()) {
+                request.source_url = url.into();
+            }
+        }
+        requests
+    }
+
     /// Returns the same QuickJS runtime that produced this document's Parse5 DOM.
     pub fn js_mut(&mut self) -> &mut JsEngine {
         self.dom_engine.js_mut()
@@ -115,8 +156,13 @@ impl Document {
     }
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub(crate) fn set_visual_viewport(&mut self, x: u32, y: u32) -> Result<(), String> {
-        input::set_viewport(self.js_mut(), x, y)
+    pub(crate) fn set_visual_viewport(
+        &mut self,
+        x: u32,
+        y: u32,
+        zoom_percent: u32,
+    ) -> Result<(), String> {
+        input::set_viewport(self.js_mut(), x, y, zoom_percent)
     }
 
     pub fn relayout(&mut self, page_width: f32) {
@@ -186,6 +232,29 @@ impl Document {
 }
 
 #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn collect_image_requests(nodes: &[HtmlNode], out: &mut Vec<ImageRequest>) {
+    for node in nodes {
+        match &node.kind {
+            node::ElementKind::Image { src, .. } if !src.is_empty() => out.push(ImageRequest {
+                node_id: node.id,
+                source_url: src.clone(),
+                rect: node.bounds,
+            }),
+            node::ElementKind::Element { children, .. }
+            | node::ElementKind::Details { children, .. }
+            | node::ElementKind::Div { children }
+            | node::ElementKind::Form { children }
+            | node::ElementKind::Iframe { children, .. }
+            | node::ElementKind::Dialog { children, .. } => collect_image_requests(children, out),
+            node::ElementKind::Label { control, .. } => {
+                collect_image_requests(core::slice::from_ref(control.as_ref()), out);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
 fn scrollbar_side_from_dom(dom: &DomArtifact) -> ScrollbarSide {
     let Some(html) = find_element(&dom.document, "html") else {
         return ScrollbarSide::default();
@@ -212,6 +281,35 @@ fn parse_scrollbar_side(value: &str) -> Option<ScrollbarSide> {
         Some(ScrollbarSide::Left)
     } else if value.trim().eq_ignore_ascii_case("right") {
         Some(ScrollbarSide::Right)
+    } else {
+        None
+    }
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn resize_handle_from_dom(dom: &DomArtifact) -> bool {
+    let Some(html) = find_element(&dom.document, "html") else {
+        return false;
+    };
+    let body = find_element(html, "body");
+    body.and_then(resize_handle_attribute)
+        .or_else(|| resize_handle_attribute(html))
+        .unwrap_or(false)
+}
+
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+fn resize_handle_attribute(node: &rust_qjs_dom::DomNode) -> Option<bool> {
+    let value = node.attribute("data-solara-resize-handle")?.trim();
+    if value.eq_ignore_ascii_case("bottom-right")
+        || value.eq_ignore_ascii_case("on")
+        || value.eq_ignore_ascii_case("true")
+    {
+        Some(true)
+    } else if value.eq_ignore_ascii_case("off")
+        || value.eq_ignore_ascii_case("none")
+        || value.eq_ignore_ascii_case("false")
+    {
+        Some(false)
     } else {
         None
     }
@@ -527,8 +625,10 @@ mod parity_baseline {
         }
         assert_eq!(batch.shapes.len(), 147);
         assert_eq!(batch.text.sections.len(), 79);
-        assert_eq!(document.content_height.to_bits(), 0x4558a000);
-        assert_eq!(hash, 0x6e15986a9080876b);
+        // Replaced images now occupy their authored CSS extent rather than a
+        // placeholder-only eight-pixel block margin.
+        assert_eq!(document.content_height.to_bits(), 0x45582000);
+        assert_eq!(hash, 0x224f53c5f36223bb);
     }
 
     #[test]
@@ -593,6 +693,46 @@ mod parity_baseline {
             ),
             ScrollbarSide::Left
         );
+    }
+
+    #[test]
+    fn dom_selects_the_rust_owned_bottom_right_resize_handle() {
+        let parse = |source: &str| {
+            let mut engine = DomEngine::new().expect("engine starts");
+            let artifact = engine
+                .parse(source, "https://solara.test/resize-handle")
+                .expect("document parses");
+            Document::from_dom(artifact, engine, 320.0)
+                .expect("document adapts")
+                .resize_handle_enabled()
+        };
+
+        assert!(!parse("<main>default</main>"));
+        assert!(parse(
+            "<body data-solara-resize-handle='bottom-right'>x</body>"
+        ));
+        assert!(!parse(
+            "<html data-solara-resize-handle='on'><body data-solara-resize-handle='off'>x</body></html>"
+        ));
+    }
+
+    #[test]
+    fn dom_preserves_and_resolves_image_requests() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                "<img src='assets/icon.png' width='64' height='32' alt='icon'>",
+                "https://solara.test/docs/page.html",
+            )
+            .expect("document parses");
+        let document = Document::from_dom(artifact, engine, 320.0).expect("document adapts");
+        let images = document.image_requests();
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].source_url,
+            "https://solara.test/docs/assets/icon.png"
+        );
+        assert_eq!((images[0].rect.width, images[0].rect.height), (64.0, 32.0));
     }
 
     #[test]

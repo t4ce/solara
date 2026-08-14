@@ -54,6 +54,7 @@ impl NodeParser<'_> {
                 height: number_attribute(element, "height", 150.0),
             },
             "img" => ElementKind::Image {
+                src: attribute(element, "src"),
                 width: number_attribute(element, "width", 240.0),
                 height: number_attribute(element, "height", 160.0),
                 alt: attribute(element, "alt"),

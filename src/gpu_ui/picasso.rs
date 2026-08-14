@@ -5,10 +5,11 @@
 //! the final viewport crop expands rounded edges into bounded solid spans.
 
 use trueos_helio_runtime::picasso_scene::{
-    Color, CornerRadii, FontLookupRun, LowerError, LoweredCommand, MAX_LOWERED_COMMANDS,
-    MAX_SCENE_PRIMITIVES, PicassoScene, Primitive, PrimitiveRef, PrimitiveRow, Rect, SceneError,
-    Viewport,
+    Color, CornerRadii, FontLookupRun, ImageResourceRef, LowerError, LoweredCommand,
+    MAX_LOWERED_COMMANDS, MAX_SCENE_PRIMITIVES, PicassoScene, Primitive, PrimitiveRef,
+    PrimitiveRow, Rect, SceneError, Viewport,
 };
+use trueos_helio_runtime::scene_db::SceneStore;
 
 use super::html::ScrollbarSide;
 use super::shapes::{
@@ -18,15 +19,19 @@ use super::shapes::{
 const SCROLLBAR_TRACK_WIDTH: u32 = 10;
 const SCROLLBAR_INSET: u32 = 2;
 const SCROLLBAR_MIN_THUMB_HEIGHT: u32 = 36;
-const SCROLLBAR_TRACK_ORDER: u32 = u32::MAX - 1;
-const SCROLLBAR_THUMB_ORDER: u32 = u32::MAX;
+const SCROLLBAR_TRACK_ORDER: u32 = u32::MAX - 2;
+const SCROLLBAR_THUMB_ORDER: u32 = u32::MAX - 1;
+const RESIZE_HANDLE_ORDER: u32 = u32::MAX;
+pub(crate) const RESIZE_HANDLE_SIZE: u32 = 18;
 const SCROLLBAR_TRACK_COLOR: Color = Color::rgba(20, 28, 40, 48);
 const SCROLLBAR_THUMB_COLOR: Color = Color::rgba(46, 107, 219, 220);
+const RESIZE_HANDLE_COLOR: Color = Color::rgba(46, 107, 219, 176);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BuildError {
     Scene(SceneError),
     UnsupportedShape(u32),
+    ImageResourceLimit,
 }
 
 impl From<SceneError> for BuildError {
@@ -59,23 +64,159 @@ pub(crate) struct PublicationStats {
     pub logical_rows: usize,
     pub shape_rows: usize,
     pub font_lookup_rows: usize,
+    pub image_rows: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ImageResourceState {
+    Pending,
+    Ready {
+        sprite_id: u32,
+        width: u32,
+        height: u32,
+    },
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImageResourceRow {
+    _node_id: u32,
+    _source_url: String,
+    revision: u32,
+    state: ImageResourceState,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ImagePlacement {
+    resource: ImageResourceRef,
+    rect: super::geometry::Rect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ReadyImageResource {
+    pub(crate) resource: ImageResourceRef,
+    pub(crate) sprite_id: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) revision: u32,
 }
 
 pub(crate) struct PaintScene {
     scene: PicassoScene,
+    image_resources: SceneStore<ImageResourceRow>,
+    image_placements: Vec<ImagePlacement>,
     scrollbar: ScrollbarScene,
     canvas: (u32, u32),
     scrollbar_side: ScrollbarSide,
+    resize_handle_enabled: bool,
 }
 
 impl PaintScene {
     pub(crate) const fn new() -> Self {
         Self {
             scene: PicassoScene::new(),
+            image_resources: SceneStore::new(),
+            image_placements: Vec::new(),
             scrollbar: ScrollbarScene::new(),
             canvas: (0, 0),
             scrollbar_side: ScrollbarSide::Right,
+            resize_handle_enabled: false,
         }
+    }
+
+    pub(crate) fn request_image(
+        &mut self,
+        request: &super::html::ImageRequest,
+    ) -> Result<ImageResourceRef, BuildError> {
+        if self.image_resources.live_count() >= MAX_SCENE_PRIMITIVES {
+            return Err(BuildError::ImageResourceLimit);
+        }
+        let handle = self.image_resources.insert(ImageResourceRow {
+            _node_id: request.node_id,
+            _source_url: request.source_url.clone(),
+            revision: 1,
+            state: ImageResourceState::Pending,
+        });
+        let resource = ImageResourceRef(handle);
+        self.image_placements.push(ImagePlacement {
+            resource,
+            rect: request.rect,
+        });
+        let _ = self.image_resources.publish();
+        Ok(resource)
+    }
+
+    pub(crate) fn image_ready(
+        &mut self,
+        resource: ImageResourceRef,
+        width: u32,
+        height: u32,
+    ) -> Result<ReadyImageResource, BuildError> {
+        if width == 0 || height == 0 {
+            return Err(BuildError::ImageResourceLimit);
+        }
+        let sprite_id = resource
+            .0
+            .slot
+            .checked_add(1)
+            .filter(|id| *id != u32::MAX)
+            .ok_or(BuildError::ImageResourceLimit)?;
+        let row = self
+            .image_resources
+            .get_mut(resource.0)
+            .ok_or(BuildError::ImageResourceLimit)?;
+        row.revision = row
+            .revision
+            .checked_add(1)
+            .ok_or(BuildError::ImageResourceLimit)?;
+        row.state = ImageResourceState::Ready {
+            sprite_id,
+            width,
+            height,
+        };
+        let revision = row.revision;
+        let _ = self.image_resources.publish();
+        Ok(ReadyImageResource {
+            resource,
+            sprite_id,
+            width,
+            height,
+            revision,
+        })
+    }
+
+    pub(crate) fn image_failed(&mut self, resource: ImageResourceRef) {
+        if let Some(row) = self.image_resources.get_mut(resource.0) {
+            row.revision = row.revision.saturating_add(1);
+            row.state = ImageResourceState::Failed;
+            let _ = self.image_resources.publish();
+        }
+    }
+
+    pub(crate) fn resolve_image(&self, resource: ImageResourceRef) -> Option<ReadyImageResource> {
+        let row = self.image_resources.get(resource.0)?;
+        let ImageResourceState::Ready {
+            sprite_id,
+            width,
+            height,
+        } = row.state
+        else {
+            return None;
+        };
+        Some(ReadyImageResource {
+            resource,
+            sprite_id,
+            width,
+            height,
+            revision: row.revision,
+        })
+    }
+
+    pub(crate) fn ready_image_count(&self) -> usize {
+        self.image_placements
+            .iter()
+            .filter(|placement| self.resolve_image(placement.resource).is_some())
+            .count()
     }
 
     /// Replace one coherent DOM-paint projection. The canvas backdrop and
@@ -88,13 +229,24 @@ impl PaintScene {
         canvas: (u32, u32),
         backdrop: Color,
         scrollbar_side: ScrollbarSide,
+        resize_handle_enabled: bool,
     ) -> Result<PublicationStats, BuildError> {
         let font_lookup_rows = text
             .sections
             .iter()
             .filter(|section| text_section_is_retainable(section))
             .count();
-        if shapes.len().saturating_add(font_lookup_rows) > MAX_SCENE_PRIMITIVES.saturating_sub(2) {
+        let image_rows = self
+            .image_placements
+            .iter()
+            .filter(|placement| self.resolve_image(placement.resource).is_some())
+            .count();
+        if shapes
+            .len()
+            .saturating_add(font_lookup_rows)
+            .saturating_add(image_rows)
+            > MAX_SCENE_PRIMITIVES.saturating_sub(2)
+        {
             return Err(BuildError::Scene(SceneError::PrimitiveLimit {
                 limit: MAX_SCENE_PRIMITIVES,
             }));
@@ -103,6 +255,7 @@ impl PaintScene {
             shapes
                 .len()
                 .saturating_add(font_lookup_rows)
+                .saturating_add(image_rows)
                 .saturating_add(2),
         );
         rows.push(PrimitiveRow::new(
@@ -152,15 +305,41 @@ impl PaintScene {
                 }),
             ));
         }
+        for placement in &self.image_placements {
+            let Some(resource) = self.resolve_image(placement.resource) else {
+                continue;
+            };
+            let order = u32::try_from(rows.len()).map_err(|_| {
+                BuildError::Scene(SceneError::PrimitiveLimit {
+                    limit: MAX_SCENE_PRIMITIVES,
+                })
+            })?;
+            rows.push(PrimitiveRow::new(
+                order,
+                Primitive::image(
+                    Rect::new(
+                        placement.rect.x,
+                        placement.rect.y,
+                        placement.rect.width,
+                        placement.rect.height,
+                    ),
+                    Rect::new(0.0, 0.0, resource.width as f32, resource.height as f32),
+                    placement.resource,
+                    255,
+                ),
+            ));
+        }
         self.scene.replace_ordered(rows)?;
         self.canvas = canvas;
         self.scrollbar_side = scrollbar_side;
+        self.resize_handle_enabled = resize_handle_enabled;
         let published = self.scene.publish();
         Ok(PublicationStats {
             epoch: published.epoch,
             logical_rows: published.live_count,
             shape_rows: shapes.len(),
             font_lookup_rows,
+            image_rows,
         })
     }
 
@@ -169,20 +348,51 @@ impl PaintScene {
         origin: (u32, u32),
         viewport: (u32, u32),
     ) -> Result<Vec<LoweredCommand>, ViewportError> {
+        self.lower_zoomed(origin, viewport, 100)
+    }
+
+    pub(crate) fn lower_zoomed(
+        &mut self,
+        origin: (u32, u32),
+        viewport: (u32, u32),
+        zoom_percent: u32,
+    ) -> Result<Vec<LoweredCommand>, ViewportError> {
         if viewport.0 == 0 || viewport.1 == 0 {
             return Err(ViewportError::Lower(LowerError::InvalidViewport));
         }
-        self.scrollbar
-            .sync(self.scrollbar_side, origin.1, self.canvas.1, viewport)?;
+        if zoom_percent == 0 {
+            return Err(ViewportError::Lower(LowerError::InvalidViewport));
+        }
+        let logical_viewport = logical_viewport_extent(viewport, zoom_percent);
+        let scaled_content_height = scale_ceil(self.canvas.1, zoom_percent);
+        let scaled_scroll_y = scale_floor(origin.1, zoom_percent);
+        self.scrollbar.sync(
+            self.scrollbar_side,
+            scaled_scroll_y,
+            scaled_content_height,
+            viewport,
+            self.resize_handle_enabled,
+        )?;
         let mut overlay = self.scrollbar.scene.lower(
             Viewport::new(0.0, 0.0, viewport.0, viewport.1),
             MAX_LOWERED_COMMANDS,
         )?;
         let document_limit = MAX_LOWERED_COMMANDS.saturating_sub(overlay.len());
         let mut document = self.scene.lower(
-            Viewport::new(origin.0 as f32, origin.1 as f32, viewport.0, viewport.1),
+            Viewport::new(
+                origin.0 as f32,
+                origin.1 as f32,
+                logical_viewport.0,
+                logical_viewport.1,
+            ),
             document_limit,
         )?;
+        let scaled_document_width = scale_ceil(self.canvas.0, zoom_percent);
+        let x_offset = viewport.0.saturating_sub(scaled_document_width) / 2;
+        document = document
+            .into_iter()
+            .filter_map(|command| project_document_command(command, zoom_percent, x_offset))
+            .collect();
         document.append(&mut overlay);
         Ok(document)
     }
@@ -215,6 +425,7 @@ struct ScrollbarScene {
     scene: PicassoScene,
     track: Option<PrimitiveRef>,
     thumb: Option<PrimitiveRef>,
+    resize_handle: Option<PrimitiveRef>,
 }
 
 impl ScrollbarScene {
@@ -223,6 +434,7 @@ impl ScrollbarScene {
             scene: PicassoScene::new(),
             track: None,
             thumb: None,
+            resize_handle: None,
         }
     }
 
@@ -232,6 +444,7 @@ impl ScrollbarScene {
         scroll_y: u32,
         content_height: u32,
         viewport: (u32, u32),
+        resize_handle_enabled: bool,
     ) -> Result<(), SceneError> {
         let geometry = scrollbar_geometry(side, scroll_y, content_height, viewport);
         let track_row = PrimitiveRow::new(
@@ -246,6 +459,14 @@ impl ScrollbarScene {
                 SCROLLBAR_THUMB_COLOR,
             ),
         );
+        let resize_row = PrimitiveRow::new(
+            RESIZE_HANDLE_ORDER,
+            Primitive::rounded_rect(
+                resize_handle_rect(viewport),
+                CornerRadii::all(4.0),
+                RESIZE_HANDLE_COLOR,
+            ),
+        );
 
         let Some((track, thumb)) = self.track.zip(self.thumb) else {
             let track = self.scene.insert(track_row)?;
@@ -258,6 +479,9 @@ impl ScrollbarScene {
             };
             self.track = Some(track);
             self.thumb = Some(thumb);
+            if resize_handle_enabled {
+                self.resize_handle = Some(self.scene.insert(resize_row)?);
+            }
             let _ = self.scene.publish();
             return Ok(());
         };
@@ -271,11 +495,186 @@ impl ScrollbarScene {
             self.scene.update(thumb, thumb_row)?;
             changed = true;
         }
+        match (resize_handle_enabled, self.resize_handle) {
+            (true, Some(handle)) => {
+                if self.scene.get(handle) != Some(&resize_row) {
+                    self.scene.update(handle, resize_row)?;
+                    changed = true;
+                }
+            }
+            (true, None) => {
+                self.resize_handle = Some(self.scene.insert(resize_row)?);
+                changed = true;
+            }
+            (false, Some(handle)) => {
+                let _ = self.scene.remove(handle);
+                self.resize_handle = None;
+                changed = true;
+            }
+            (false, None) => {}
+        }
         if changed {
             let _ = self.scene.publish();
         }
         Ok(())
     }
+}
+
+pub(crate) fn logical_viewport_extent(viewport: (u32, u32), zoom_percent: u32) -> (u32, u32) {
+    let zoom = zoom_percent.max(1);
+    (
+        u32::try_from(
+            u64::from(viewport.0)
+                .saturating_mul(100)
+                .div_ceil(u64::from(zoom)),
+        )
+        .unwrap_or(u32::MAX)
+        .max(1),
+        u32::try_from(
+            u64::from(viewport.1)
+                .saturating_mul(100)
+                .div_ceil(u64::from(zoom)),
+        )
+        .unwrap_or(u32::MAX)
+        .max(1),
+    )
+}
+
+fn project_document_command(
+    command: LoweredCommand,
+    zoom_percent: u32,
+    x_offset: u32,
+) -> Option<LoweredCommand> {
+    match command {
+        LoweredCommand::SolidSpan {
+            order,
+            x,
+            y,
+            width,
+            height,
+            color,
+        } => {
+            let (x, width) = project_axis(x, width, zoom_percent, x_offset)?;
+            let (y, height) = project_axis(y, height, zoom_percent, 0)?;
+            Some(LoweredCommand::SolidSpan {
+                order,
+                x,
+                y,
+                width,
+                height,
+                color,
+            })
+        }
+        LoweredCommand::FontCanvas {
+            order,
+            x,
+            y,
+            source_x,
+            source_y,
+            width,
+            height,
+        } => {
+            let (x, _) = project_axis(x, width, zoom_percent, x_offset)?;
+            let (y, _) = project_axis(y, height, zoom_percent, 0)?;
+            Some(LoweredCommand::FontCanvas {
+                order,
+                x,
+                y,
+                source_x,
+                source_y,
+                // FontCanvas width/height continue to name the exact source
+                // crop. The Blueprint adapter projects only its destination;
+                // unlike solid spans, this command cannot encode two extents.
+                width,
+                height,
+            })
+        }
+        LoweredCommand::FontLookup {
+            order,
+            x,
+            y,
+            width,
+            height,
+            lookup,
+        } => {
+            let (x, width) = project_axis(x, width, zoom_percent, x_offset)?;
+            let (y, height) = project_axis(y, height, zoom_percent, 0)?;
+            Some(LoweredCommand::FontLookup {
+                order,
+                x,
+                y,
+                width,
+                height,
+                lookup,
+            })
+        }
+        LoweredCommand::Image {
+            order,
+            x,
+            y,
+            width,
+            height,
+            source_x,
+            source_y,
+            source_width,
+            source_height,
+            resource,
+            opacity,
+        } => {
+            let (x, width) = project_axis(u32::from(x), u32::from(width), zoom_percent, x_offset)?;
+            let (y, height) = project_axis(u32::from(y), u32::from(height), zoom_percent, 0)?;
+            Some(LoweredCommand::Image {
+                order,
+                x: u16::try_from(x).ok()?,
+                y: u16::try_from(y).ok()?,
+                width: u16::try_from(width).ok()?,
+                height: u16::try_from(height).ok()?,
+                source_x,
+                source_y,
+                source_width,
+                source_height,
+                resource,
+                opacity,
+            })
+        }
+    }
+}
+
+fn project_axis(value: u32, size: u32, zoom_percent: u32, offset: u32) -> Option<(u32, u32)> {
+    let start = scale_round(value, zoom_percent).checked_add(offset)?;
+    let end = scale_round(value.checked_add(size)?, zoom_percent).checked_add(offset)?;
+    (end > start).then_some((start, end - start))
+}
+
+fn scale_floor(value: u32, zoom_percent: u32) -> u32 {
+    (u64::from(value).saturating_mul(u64::from(zoom_percent)) / 100).min(u64::from(u32::MAX)) as u32
+}
+
+fn scale_ceil(value: u32, zoom_percent: u32) -> u32 {
+    u32::try_from(
+        u64::from(value)
+            .saturating_mul(u64::from(zoom_percent))
+            .div_ceil(100),
+    )
+    .unwrap_or(u32::MAX)
+}
+
+fn scale_round(value: u32, zoom_percent: u32) -> u32 {
+    (u64::from(value)
+        .saturating_mul(u64::from(zoom_percent))
+        .saturating_add(50)
+        / 100)
+        .min(u64::from(u32::MAX)) as u32
+}
+
+fn resize_handle_rect(viewport: (u32, u32)) -> Rect {
+    let size = RESIZE_HANDLE_SIZE.min(viewport.0).min(viewport.1).max(1);
+    Rect::new(
+        viewport.0.saturating_sub(size) as f32,
+        viewport.1.saturating_sub(size) as f32,
+        size as f32,
+        size as f32,
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -400,6 +799,7 @@ mod tests {
                 (32, 24),
                 Color::rgba(250, 250, 250, 255),
                 ScrollbarSide::Right,
+                false,
             )
             .unwrap();
         assert_eq!(published.logical_rows, 5);
@@ -428,7 +828,9 @@ mod tests {
                 .all(|command| match command {
                     LoweredCommand::FontLookup { .. } => true,
                     LoweredCommand::SolidSpan { order, .. } => {
-                        *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
+                        *order == SCROLLBAR_TRACK_ORDER
+                            || *order == SCROLLBAR_THUMB_ORDER
+                            || *order == RESIZE_HANDLE_ORDER
                     }
                     _ => false,
                 })
@@ -448,6 +850,7 @@ mod tests {
                 (1, 1),
                 Color::rgba(0, 0, 0, 255),
                 ScrollbarSide::Right,
+                false,
             ),
             Err(BuildError::UnsupportedShape(99))
         );
@@ -465,6 +868,7 @@ mod tests {
                 (1, 1),
                 Color::rgba(0, 0, 0, 255),
                 ScrollbarSide::Right,
+                false,
             ),
             Err(BuildError::Scene(SceneError::PrimitiveLimit {
                 limit: MAX_SCENE_PRIMITIVES,
@@ -500,6 +904,7 @@ mod tests {
                 canvas,
                 Color::rgba(250, 250, 250, 255),
                 document.scrollbar_side(),
+                document.resize_handle_enabled(),
             )
             .expect("paint projection publishes");
         assert_eq!(published.shape_rows, batch.shapes.len());
@@ -535,7 +940,9 @@ mod tests {
                 .all(|command| match command {
                     LoweredCommand::FontLookup { .. } => true,
                     LoweredCommand::SolidSpan { order, .. } => {
-                        *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
+                        *order == SCROLLBAR_TRACK_ORDER
+                            || *order == SCROLLBAR_THUMB_ORDER
+                            || *order == RESIZE_HANDLE_ORDER
                     }
                     _ => false,
                 })
@@ -569,6 +976,7 @@ mod tests {
                 (100, 400),
                 Color::rgba(250, 250, 250, 255),
                 ScrollbarSide::Left,
+                false,
             )
             .unwrap();
         let top = scene.lower((0, 0), (100, 100)).unwrap();
@@ -598,6 +1006,121 @@ mod tests {
     }
 
     #[test]
+    fn maximized_projection_keeps_document_one_to_one_and_top_centered() {
+        let mut scene = PaintScene::new();
+        scene
+            .rebuild(
+                &[],
+                &TextBatch::default(),
+                (960, 1_800),
+                Color::rgba(250, 250, 250, 255),
+                ScrollbarSide::Right,
+                true,
+            )
+            .unwrap();
+        let commands = scene.lower_zoomed((0, 0), (2_560, 1_440), 100).unwrap();
+        let canvas = commands
+            .iter()
+            .find_map(|command| match command {
+                LoweredCommand::FontCanvas {
+                    x,
+                    y,
+                    source_x,
+                    source_y,
+                    width,
+                    height,
+                    ..
+                } => Some((*x, *y, *source_x, *source_y, *width, *height)),
+                _ => None,
+            })
+            .expect("document canvas projects");
+        assert_eq!(canvas, (800, 0, 0, 0, 960, 1_440));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            LoweredCommand::SolidSpan {
+                order: RESIZE_HANDLE_ORDER,
+                x,
+                y,
+                ..
+            } if *x >= 2_560 - RESIZE_HANDLE_SIZE && *y >= 1_440 - RESIZE_HANDLE_SIZE
+        )));
+    }
+
+    #[test]
+    fn zoom_projection_changes_destination_but_preserves_font_source_crop() {
+        let mut scene = PaintScene::new();
+        scene
+            .rebuild(
+                &[],
+                &TextBatch::default(),
+                (960, 1_800),
+                Color::rgba(250, 250, 250, 255),
+                ScrollbarSide::Right,
+                false,
+            )
+            .unwrap();
+        let commands = scene.lower_zoomed((0, 0), (2_560, 1_440), 200).unwrap();
+        let canvas = commands
+            .iter()
+            .find_map(|command| match command {
+                LoweredCommand::FontCanvas {
+                    x,
+                    source_x,
+                    width,
+                    height,
+                    ..
+                } => Some((*x, *source_x, *width, *height)),
+                _ => None,
+            })
+            .expect("font crop survives zoom projection");
+        assert_eq!(canvas, (320, 0, 960, 720));
+        assert_eq!(logical_viewport_extent((2_560, 1_440), 200), (1_280, 720));
+    }
+
+    #[test]
+    fn image_resource_transitions_pending_ready_failed_and_lowers_after_font() {
+        let mut scene = PaintScene::new();
+        let resource = scene
+            .request_image(&super::super::html::ImageRequest {
+                node_id: 7,
+                source_url: String::from("https://solara.test/icon.png"),
+                rect: super::super::geometry::Rect {
+                    x: 12.0,
+                    y: 20.0,
+                    width: 64.0,
+                    height: 32.0,
+                },
+            })
+            .unwrap();
+        assert_eq!(scene.ready_image_count(), 0);
+        let ready = scene.image_ready(resource, 128, 64).unwrap();
+        assert_eq!(ready.sprite_id, 1);
+        assert_eq!(scene.ready_image_count(), 1);
+        scene
+            .rebuild(
+                &[],
+                &super::super::text::TextBatch::default(),
+                (320, 240),
+                Color::rgba(255, 255, 255, 255),
+                ScrollbarSide::Right,
+                false,
+            )
+            .unwrap();
+        let commands = scene.lower((0, 0), (320, 240)).unwrap();
+        let font_index = commands
+            .iter()
+            .position(|command| matches!(command, LoweredCommand::FontCanvas { .. }))
+            .unwrap();
+        let image_index = commands
+            .iter()
+            .position(|command| matches!(command, LoweredCommand::Image { resource: found, .. } if *found == resource))
+            .unwrap();
+        assert!(image_index > font_index);
+        scene.image_failed(resource);
+        assert_eq!(scene.ready_image_count(), 0);
+    }
+
+    #[test]
     fn unicode_font_lookup_preserves_style_color_and_order_with_canvas_fallback() {
         let mut text = TextBatch::default();
         queue_left_sized_with_font(
@@ -619,6 +1142,7 @@ mod tests {
                 (320, 120),
                 Color::rgba(250, 250, 250, 255),
                 ScrollbarSide::Right,
+                false,
             )
             .expect("Unicode lookup row publishes");
         assert_eq!(publication.font_lookup_rows, 1);
@@ -671,6 +1195,7 @@ mod tests {
                 (320, document.content_height.ceil() as u32),
                 Color::rgba(255, 255, 255, 255),
                 ScrollbarSide::Right,
+                false,
             )
             .expect("DOM scene publishes");
         let rows = scene.font_lookup_rows().collect::<Vec<_>>();

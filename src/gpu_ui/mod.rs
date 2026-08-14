@@ -26,6 +26,8 @@ mod youtube_media;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub(crate) use text::char_width as ui4_char_width;
+#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+pub(crate) use html::ImageRequest;
 
 #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
 fn clamped_vertical_pan(
@@ -110,6 +112,7 @@ impl Ui4TextDocument {
             canvas,
             backdrop,
             self.document.scrollbar_side(),
+            self.document.resize_handle_enabled(),
         )
     }
 
@@ -117,8 +120,21 @@ impl Ui4TextDocument {
         self.document.scrollbar_side()
     }
 
-    pub(crate) fn set_visual_viewport(&mut self, origin: (u32, u32)) -> Result<(), String> {
-        self.document.set_visual_viewport(origin.0, origin.1)
+    pub(crate) const fn resize_handle_enabled(&self) -> bool {
+        self.document.resize_handle_enabled()
+    }
+
+    pub(crate) fn image_requests(&self) -> Vec<html::ImageRequest> {
+        self.document.image_requests()
+    }
+
+    pub(crate) fn set_visual_viewport(
+        &mut self,
+        origin: (u32, u32),
+        zoom_percent: u32,
+    ) -> Result<(), String> {
+        self.document
+            .set_visual_viewport(origin.0, origin.1, zoom_percent)
     }
 
     pub(crate) fn dispatch_mouse(

@@ -32,6 +32,7 @@ include = [
 [dependencies]
 serde_json = "1.0"
 trueos-helio-runtime = { version = "0.1.0", path = "../TRUEOS/crates/trueos-helio-runtime" }
+url = "2"
 
 [features]
 default = []
@@ -54,7 +55,6 @@ env_logger = "0.11.11"
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 solara-wgpu-shim = { version = "0.1.0", path = "crates/solara-wgpu-shim" }
 ureq = "3.3.0"
-url = "2"
 winit = "0.30"
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]

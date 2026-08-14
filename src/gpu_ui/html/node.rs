@@ -318,6 +318,7 @@ pub enum ElementKind {
         children: Vec<HtmlNode>,
     },
     Image {
+        src: String,
         width: f32,
         height: f32,
         alt: String,

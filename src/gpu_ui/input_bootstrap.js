@@ -241,7 +241,7 @@
     G.WheelEvent = WheelEvent;
     G.EventTarget = EventTarget;
 
-    const viewportState = { x: 0, y: 0 };
+    const viewportState = { x: 0, y: 0, scale: 1 };
     const viewportOffset = (axis) => ({
         configurable: true,
         enumerable: true,
@@ -252,11 +252,20 @@
         scrollY: viewportOffset('y'),
         pageXOffset: viewportOffset('x'),
         pageYOffset: viewportOffset('y'),
+        devicePixelRatio: viewportOffset('scale'),
     });
-    G.__solaraSetViewport = (x, y) => {
+    G.visualViewport = Object.freeze({
+        get offsetLeft() { return viewportState.x; },
+        get offsetTop() { return viewportState.y; },
+        get pageLeft() { return viewportState.x; },
+        get pageTop() { return viewportState.y; },
+        get scale() { return viewportState.scale; },
+    });
+    G.__solaraSetViewport = (x, y, zoomPercent) => {
         viewportState.x = Math.max(0, Number(x) || 0);
         viewportState.y = Math.max(0, Number(y) || 0);
-        return { x: viewportState.x, y: viewportState.y };
+        viewportState.scale = Math.max(0.1, Math.min(5, (Number(zoomPercent) || 100) / 100));
+        return { x: viewportState.x, y: viewportState.y, scale: viewportState.scale };
     };
 
     G.__solaraDispatchMouse = (payload) => {
