@@ -25,7 +25,7 @@ pub(crate) mod youtube;
 mod youtube_media;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) use text::{TextBatch as Ui4TextBatch, char_width as ui4_char_width};
+pub(crate) use text::char_width as ui4_char_width;
 
 #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
 fn clamped_vertical_pan(
@@ -102,19 +102,15 @@ impl Ui4TextDocument {
         scene: &mut picasso::PaintScene,
         canvas: (u32, u32),
         backdrop: trueos_helio_runtime::picasso_scene::Color,
-    ) -> Result<(picasso::PublicationStats, &'a Ui4TextBatch), picasso::BuildError> {
+    ) -> Result<picasso::PublicationStats, picasso::BuildError> {
         html::collect_batch(&self.document, 1.0, &mut self.batch);
-        let publication = scene.rebuild(
+        scene.rebuild(
             &self.batch.shapes,
+            &self.batch.text,
             canvas,
             backdrop,
             self.document.scrollbar_side(),
-        )?;
-        Ok((publication, &self.batch.text))
-    }
-
-    pub(crate) fn text_batch(&self) -> &Ui4TextBatch {
-        &self.batch.text
+        )
     }
 
     pub(crate) const fn scrollbar_side(&self) -> html::ScrollbarSide {

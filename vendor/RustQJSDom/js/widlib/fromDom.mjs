@@ -75,6 +75,7 @@ function compactTextStyle(style) {
   if (style.lineHeightPx != null) out.lineHeightPx = Number(style.lineHeightPx);
   if (style.fontWeight != null) out.fontWeight = String(style.fontWeight);
   if (style.fontStyle != null) out.fontStyle = String(style.fontStyle);
+  if (style.fontFamily != null) out.fontFamily = String(style.fontFamily);
   if (style.whiteSpace != null) out.whiteSpace = String(style.whiteSpace);
   return Object.keys(out).length > 0 ? out : null;
 }

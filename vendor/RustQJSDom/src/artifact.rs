@@ -170,6 +170,7 @@ pub struct ComputedStyle {
     pub line_height_px: Option<f32>,
     pub font_weight: Option<String>,
     pub font_style: Option<String>,
+    pub font_family: Option<String>,
     pub text_align: Option<String>,
     pub white_space: Option<String>,
     pub margin_left_px: Option<f32>,

@@ -1,9 +1,11 @@
 //! TRUEOS Blueprint entry point for Solara's retained Picasso/UI4 pass.
 
-use trueos_helio_runtime::picasso_scene::{Color, LoweredCommand};
+use trueos_helio_runtime::picasso_scene::{
+    Color, FontFace as SceneFontFace, FontSlant, LoweredCommand,
+};
 
 use trueos::ui4_scene::{
-    self, CursorSource, Damage, Error, Font, FontCanvasRow, Frame, POINTER_BUTTON_MIDDLE,
+    CursorSource, Damage, Error, Font, FontCanvasRow, Frame, POINTER_BUTTON_MIDDLE,
     POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PanPhase, PointerEvent, SpriteCorner,
     SpriteQuad,
 };
@@ -63,6 +65,7 @@ struct OwnedTextRow {
 struct TextCanvasStats {
     rows: usize,
     glyphs: usize,
+    compatibility_style_mismatches: usize,
 }
 
 impl SolaraView {
@@ -90,7 +93,7 @@ impl SolaraView {
         if !self.font_canvas_dirty {
             return Ok(());
         }
-        let _ = build_text_canvas(&mut self.frame, self.canvas, self.document.text_batch())?;
+        let _ = build_text_canvas(&mut self.frame, self.canvas, &self.paint_scene)?;
         self.font_canvas_dirty = false;
         Ok(())
     }
@@ -209,6 +212,10 @@ impl SolaraView {
                     (source_x, source_y),
                     (width, height),
                 )?),
+                // Shadow lookup rows are retained for FontKernel resolution;
+                // FontCanvas remains the sole visual text pass until UI4 can
+                // prove mixed sprite/retained-text release ordering.
+                LoweredCommand::FontLookup { .. } => {}
             }
         }
         retry_busy(|| self.frame.begin_sprite_frame(BACKGROUND.to_u32_le()))?;
@@ -322,11 +329,11 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         font_canvas_dirty: false,
         needs_present: true,
     };
-    let (scene_stats, text) = view
+    let scene_stats = view
         .document
         .rebuild_scene(&mut view.paint_scene, view.canvas, BACKGROUND)
         .map_err(|error| invalid_picasso("DOM scene publication", error))?;
-    let stats = build_text_canvas(&mut view.frame, view.canvas, text)?;
+    let stats = build_text_canvas(&mut view.frame, view.canvas, &view.paint_scene)?;
     view.sync_dom_viewport();
     let lowered_commands = view.present_viewport()?;
     if let Some(path) = document.handoff_path.as_deref() {
@@ -342,13 +349,15 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         }
     }
     let summary = format!(
-        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} lowered_commands={} text_rows={} glyphs={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} font=inconsolata source={}\n",
+        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} font_lookup_rows={} lowered_commands={} text_rows={} glyphs={} fallback_style_mismatches={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} font=inconsolata source={}\n",
         scene_stats.epoch,
         scene_stats.logical_rows,
         scene_stats.shape_rows,
+        scene_stats.font_lookup_rows,
         lowered_commands,
         stats.rows,
         stats.glyphs,
+        stats.compatibility_style_mismatches,
         FRAME_WIDTH,
         FRAME_HEIGHT,
         view.canvas.0,
@@ -420,12 +429,12 @@ fn dispatch_pointer_event(
 fn build_text_canvas(
     frame: &mut Frame,
     canvas: (u32, u32),
-    text: &crate::gpu_ui::Ui4TextBatch,
+    scene: &crate::gpu_ui::picasso::PaintScene,
 ) -> Result<TextCanvasStats, Error> {
-    let glyphs = text
-        .sections
+    let lookup_rows = scene.font_lookup_rows().collect::<Vec<_>>();
+    let glyphs = lookup_rows
         .iter()
-        .map(|section| section.text.chars().count())
+        .map(|row| row.text.chars().count())
         .sum::<usize>();
     if glyphs > TEXT_CANVAS_MAX_GLYPHS {
         let message = format!(
@@ -437,25 +446,35 @@ fn build_text_canvas(
     }
 
     let mut rows = Vec::<OwnedTextRow>::new();
-    for section in &text.sections {
-        let color = packed_color(section.color);
-        let advance = crate::gpu_ui::ui4_char_width(section.font_size);
+    let compatibility_style_mismatches = lookup_rows
+        .iter()
+        .filter(|row| row.face != SceneFontFace::Inconsolata || row.slant != FontSlant::Normal)
+        .count();
+    if compatibility_style_mismatches != 0 {
+        let message = format!(
+            "solara: FontCanvas compatibility fallback maps {compatibility_style_mismatches} SceneDB face/slant rows to Inconsolata normal; FontLookup rows retain the exact requested styles\n",
+        );
+        trueos::vsys::write_err(message.as_bytes());
+    }
+    for lookup in &lookup_rows {
+        let color = lookup.color.to_u32_le();
+        let advance = crate::gpu_ui::ui4_char_width(lookup.font_pixels);
         let mut byte_start = 0usize;
         let mut character_start = 0usize;
-        while byte_start < section.text.len() {
-            let mut byte_end = (byte_start + TEXT_ROW_MAX_BYTES).min(section.text.len());
-            while byte_end > byte_start && !section.text.is_char_boundary(byte_end) {
+        while byte_start < lookup.text.len() {
+            let mut byte_end = (byte_start + TEXT_ROW_MAX_BYTES).min(lookup.text.len());
+            while byte_end > byte_start && !lookup.text.is_char_boundary(byte_end) {
                 byte_end -= 1;
             }
             if byte_end == byte_start {
                 return Err(Error::Invalid);
             }
-            let fragment = &section.text[byte_start..byte_end];
+            let fragment = &lookup.text[byte_start..byte_end];
             rows.push(OwnedTextRow {
                 text: fragment.to_string(),
-                x: section.x + character_start as f32 * advance,
-                y: section.y,
-                font_pixels: section.font_size,
+                x: lookup.origin[0] + character_start as f32 * advance,
+                y: lookup.origin[1],
+                font_pixels: lookup.font_pixels,
                 color_rgba: color,
             });
             character_start += fragment.chars().count();
@@ -486,6 +505,7 @@ fn build_text_canvas(
     Ok(TextCanvasStats {
         rows: rows.len(),
         glyphs,
+        compatibility_style_mismatches,
     })
 }
 
@@ -671,14 +691,4 @@ fn invalid_startup(reason: &str) -> Error {
     trueos::vsys::write_err(reason.as_bytes());
     trueos::vsys::write_err(b"\n");
     Error::Invalid
-}
-
-fn packed_color(color: [f32; 4]) -> u32 {
-    let channel = |value: f32| ((value.clamp(0.0, 1.0) * 255.0) + 0.5) as u8;
-    ui4_scene::rgba(
-        channel(color[0]),
-        channel(color[1]),
-        channel(color[2]),
-        channel(color[3]),
-    )
 }

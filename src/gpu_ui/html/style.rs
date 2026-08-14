@@ -9,6 +9,8 @@ pub(super) struct ResolvedStyle {
     pub background_color: Option<[f32; 4]>,
     pub font_size: Option<f32>,
     pub line_height: Option<f32>,
+    pub font_family: Option<String>,
+    pub font_style: Option<String>,
     pub border_width: Option<f32>,
     pub border_color: Option<[f32; 4]>,
 }
@@ -39,6 +41,8 @@ fn from_computed(style: &ComputedStyle) -> ResolvedStyle {
         // not directly authored on this node.
         font_size: style.font_size_px,
         line_height: style.line_height_px,
+        font_family: style.font_family.clone(),
+        font_style: style.font_style.clone(),
         border_width: authored(
             style,
             &[

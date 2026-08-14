@@ -5,8 +5,9 @@
 //! the final viewport crop expands rounded edges into bounded solid spans.
 
 use trueos_helio_runtime::picasso_scene::{
-    Color, CornerRadii, LowerError, LoweredCommand, MAX_LOWERED_COMMANDS, MAX_SCENE_PRIMITIVES,
-    PicassoScene, Primitive, PrimitiveRef, PrimitiveRow, Rect, SceneError, Viewport,
+    Color, CornerRadii, FontLookupRun, LowerError, LoweredCommand, MAX_LOWERED_COMMANDS,
+    MAX_SCENE_PRIMITIVES, PicassoScene, Primitive, PrimitiveRef, PrimitiveRow, Rect, SceneError,
+    Viewport,
 };
 
 use super::html::ScrollbarSide;
@@ -57,6 +58,7 @@ pub(crate) struct PublicationStats {
     pub epoch: u64,
     pub logical_rows: usize,
     pub shape_rows: usize,
+    pub font_lookup_rows: usize,
 }
 
 pub(crate) struct PaintScene {
@@ -82,16 +84,27 @@ impl PaintScene {
     pub(crate) fn rebuild(
         &mut self,
         shapes: &[ShapeInstance],
+        text: &super::text::TextBatch,
         canvas: (u32, u32),
         backdrop: Color,
         scrollbar_side: ScrollbarSide,
     ) -> Result<PublicationStats, BuildError> {
-        if shapes.len() > MAX_SCENE_PRIMITIVES.saturating_sub(2) {
+        let font_lookup_rows = text
+            .sections
+            .iter()
+            .filter(|section| text_section_is_retainable(section))
+            .count();
+        if shapes.len().saturating_add(font_lookup_rows) > MAX_SCENE_PRIMITIVES.saturating_sub(2) {
             return Err(BuildError::Scene(SceneError::PrimitiveLimit {
                 limit: MAX_SCENE_PRIMITIVES,
             }));
         }
-        let mut rows = Vec::with_capacity(shapes.len().saturating_add(2));
+        let mut rows = Vec::with_capacity(
+            shapes
+                .len()
+                .saturating_add(font_lookup_rows)
+                .saturating_add(2),
+        );
         rows.push(PrimitiveRow::new(
             0,
             Primitive::solid_rect(
@@ -116,6 +129,29 @@ impl PaintScene {
             font_order,
             Primitive::font_canvas(Rect::new(0.0, 0.0, canvas.0 as f32, canvas.1 as f32)),
         ));
+        for section in text
+            .sections
+            .iter()
+            .filter(|section| text_section_is_retainable(section))
+        {
+            let order = u32::try_from(rows.len()).map_err(|_| {
+                BuildError::Scene(SceneError::PrimitiveLimit {
+                    limit: MAX_SCENE_PRIMITIVES,
+                })
+            })?;
+            rows.push(PrimitiveRow::new(
+                order,
+                Primitive::font_lookup(FontLookupRun {
+                    rect: Rect::new(section.x, section.y, section.width, section.height),
+                    origin: [section.x, section.y],
+                    text: section.text.clone(),
+                    face: section.face,
+                    slant: section.slant,
+                    font_pixels: section.font_size,
+                    color: Color::from_rgba_f32(section.color)?,
+                }),
+            ));
+        }
         self.scene.replace_ordered(rows)?;
         self.canvas = canvas;
         self.scrollbar_side = scrollbar_side;
@@ -124,6 +160,7 @@ impl PaintScene {
             epoch: published.epoch,
             logical_rows: published.live_count,
             shape_rows: shapes.len(),
+            font_lookup_rows,
         })
     }
 
@@ -149,6 +186,29 @@ impl PaintScene {
         document.append(&mut overlay);
         Ok(document)
     }
+
+    pub(crate) fn font_lookup(&self, lookup: PrimitiveRef) -> Option<&FontLookupRun> {
+        self.scene.font_lookup(lookup)
+    }
+
+    /// Copy the compact Unicode/style requests from the authoritative SceneDB
+    /// publication for asynchronous FontKernel submission. No outline or
+    /// coverage data is present in these rows.
+    pub(crate) fn font_lookup_rows(&self) -> impl Iterator<Item = &FontLookupRun> {
+        self.scene.font_lookup_rows().map(|(_, run)| run)
+    }
+}
+
+fn text_section_is_retainable(section: &super::text::TextSection) -> bool {
+    !section.text.is_empty()
+        && section.x.is_finite()
+        && section.y.is_finite()
+        && section.width.is_finite()
+        && section.width > 0.0
+        && section.height.is_finite()
+        && section.height > 0.0
+        && section.font_size.is_finite()
+        && section.font_size > 0.0
 }
 
 struct ScrollbarScene {
@@ -310,6 +370,7 @@ mod tests {
     use super::*;
     use crate::gpu_ui::geometry::Rect as SolaraRect;
     use crate::gpu_ui::html::{Document, RenderBatch, collect_batch};
+    use crate::gpu_ui::text::{FontFace, FontSlant, TextBatch, queue_left_sized_with_font};
     use rust_qjs_dom::DomEngine;
 
     #[test]
@@ -335,6 +396,7 @@ mod tests {
         let published = scene
             .rebuild(
                 &shapes,
+                &TextBatch::default(),
                 (32, 24),
                 Color::rgba(250, 250, 250, 255),
                 ScrollbarSide::Right,
@@ -360,11 +422,17 @@ mod tests {
             .iter()
             .position(|command| matches!(command, LoweredCommand::FontCanvas { order: 4, .. }))
             .expect("document FontCanvas remains ordered");
-        assert!(commands[font_index + 1..].iter().all(|command| matches!(
-            command,
-            LoweredCommand::SolidSpan { order, .. }
-                if *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
-        )));
+        assert!(
+            commands[font_index + 1..]
+                .iter()
+                .all(|command| match command {
+                    LoweredCommand::FontLookup { .. } => true,
+                    LoweredCommand::SolidSpan { order, .. } => {
+                        *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
+                    }
+                    _ => false,
+                })
+        );
     }
 
     #[test]
@@ -376,6 +444,7 @@ mod tests {
         assert_eq!(
             scene.rebuild(
                 &[shape],
+                &TextBatch::default(),
                 (1, 1),
                 Color::rgba(0, 0, 0, 255),
                 ScrollbarSide::Right,
@@ -392,6 +461,7 @@ mod tests {
         assert_eq!(
             scene.rebuild(
                 &shapes,
+                &TextBatch::default(),
                 (1, 1),
                 Color::rgba(0, 0, 0, 255),
                 ScrollbarSide::Right,
@@ -426,12 +496,22 @@ mod tests {
         let published = scene
             .rebuild(
                 batch.shapes.as_slice(),
+                &batch.text,
                 canvas,
                 Color::rgba(250, 250, 250, 255),
                 document.scrollbar_side(),
             )
             .expect("paint projection publishes");
         assert_eq!(published.shape_rows, batch.shapes.len());
+        assert_eq!(
+            published.font_lookup_rows,
+            batch
+                .text
+                .sections
+                .iter()
+                .filter(|section| text_section_is_retainable(section))
+                .count()
+        );
         let commands = scene
             .lower((0, 0), (960, 720))
             .expect("first viewport lowers within UI4 cap");
@@ -449,11 +529,17 @@ mod tests {
             .position(|command| matches!(command, LoweredCommand::FontCanvas { .. }))
             .expect("FontCanvas is present");
         assert!(font_index + 1 < commands.len());
-        assert!(commands[font_index + 1..].iter().all(|command| matches!(
-            command,
-            LoweredCommand::SolidSpan { order, .. }
-                if *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
-        )));
+        assert!(
+            commands[font_index + 1..]
+                .iter()
+                .all(|command| match command {
+                    LoweredCommand::FontLookup { .. } => true,
+                    LoweredCommand::SolidSpan { order, .. } => {
+                        *order == SCROLLBAR_TRACK_ORDER || *order == SCROLLBAR_THUMB_ORDER
+                    }
+                    _ => false,
+                })
+        );
     }
 
     #[test]
@@ -479,6 +565,7 @@ mod tests {
         scene
             .rebuild(
                 &[],
+                &TextBatch::default(),
                 (100, 400),
                 Color::rgba(250, 250, 250, 255),
                 ScrollbarSide::Left,
@@ -508,5 +595,95 @@ mod tests {
         assert_eq!(font_source_y(&top), Some(0));
         assert_eq!(font_source_y(&bottom), Some(300));
         assert!(thumb_top(&top) < thumb_top(&bottom));
+    }
+
+    #[test]
+    fn unicode_font_lookup_preserves_style_color_and_order_with_canvas_fallback() {
+        let mut text = TextBatch::default();
+        queue_left_sized_with_font(
+            &mut text,
+            11.0,
+            19.0,
+            "SceneDB 你好",
+            [0.25, 0.5, 0.75, 1.0],
+            23.0,
+            31.0,
+            FontFace::NotoSansSc,
+            FontSlant::Italic,
+        );
+        let mut scene = PaintScene::new();
+        let publication = scene
+            .rebuild(
+                &[],
+                &text,
+                (320, 120),
+                Color::rgba(250, 250, 250, 255),
+                ScrollbarSide::Right,
+            )
+            .expect("Unicode lookup row publishes");
+        assert_eq!(publication.font_lookup_rows, 1);
+        let commands = scene.lower((0, 0), (320, 120)).unwrap();
+        let canvas_index = commands
+            .iter()
+            .position(|command| matches!(command, LoweredCommand::FontCanvas { .. }))
+            .expect("compatibility canvas remains present");
+        let (lookup_index, lookup) = commands
+            .iter()
+            .enumerate()
+            .find_map(|(index, command)| match command {
+                LoweredCommand::FontLookup { lookup, .. } => Some((index, *lookup)),
+                _ => None,
+            })
+            .expect("compact Unicode lookup survives lowering");
+        let run = scene.font_lookup(lookup).expect("lookup handle resolves");
+        assert_eq!(run.text, "SceneDB 你好");
+        assert_eq!(run.face, FontFace::NotoSansSc);
+        assert_eq!(run.slant, FontSlant::Italic);
+        assert_eq!(run.font_pixels, 23.0);
+        assert_eq!(run.origin, [11.0, 19.0]);
+        assert_eq!(run.color, Color::rgba(64, 128, 191, 255));
+        assert!(canvas_index < lookup_index);
+    }
+
+    #[test]
+    fn dom_css_typography_survives_into_ordered_scenedb_lookup_rows() {
+        let mut engine = DomEngine::new().expect("QuickJS DOM engine starts");
+        let artifact = engine
+            .parse(
+                r#"
+                    <style>
+                      #first { color: rgb(10, 20, 30); font-family: "Noto Sans SC"; font-size: 19px; font-style: italic; }
+                      #second { color: rgb(40, 50, 60); font-family: monospace; font-size: 13px; }
+                    </style>
+                    <main><p id="first">你好</p><p id="second">second</p></main>
+                "#,
+                "https://solara.test/font-lookup",
+            )
+            .expect("DOM parses");
+        let document = Document::from_dom(artifact, engine, 320.0).expect("DOM adapts");
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        let mut scene = PaintScene::new();
+        scene
+            .rebuild(
+                &batch.shapes,
+                &batch.text,
+                (320, document.content_height.ceil() as u32),
+                Color::rgba(255, 255, 255, 255),
+                ScrollbarSide::Right,
+            )
+            .expect("DOM scene publishes");
+        let rows = scene.font_lookup_rows().collect::<Vec<_>>();
+        let first = rows.iter().position(|row| row.text == "你好").unwrap();
+        let second = rows.iter().position(|row| row.text == "second").unwrap();
+        assert!(first < second, "DOM paint order is retained");
+        assert_eq!(rows[first].face, FontFace::NotoSansSc);
+        assert_eq!(rows[first].slant, FontSlant::Italic);
+        assert_eq!(rows[first].font_pixels, 19.0);
+        assert_eq!(rows[first].color, Color::rgba(10, 20, 30, 255));
+        assert_eq!(rows[second].face, FontFace::Inconsolata);
+        assert_eq!(rows[second].slant, FontSlant::Normal);
+        assert_eq!(rows[second].font_pixels, 13.0);
+        assert_eq!(rows[second].color, Color::rgba(40, 50, 60, 255));
     }
 }

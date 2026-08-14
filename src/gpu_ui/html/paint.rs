@@ -6,7 +6,7 @@ use crate::gpu_ui::geometry::{CONTROL_H, Rect, TEXT_LINE, iframe_viewport};
 use crate::gpu_ui::html::node::{ButtonType, ElementKind, HtmlNode, Inline, InputType, SvgChild};
 use crate::gpu_ui::html::style::{self, ResolvedStyle};
 use crate::gpu_ui::shapes::ShapeInstance;
-use crate::gpu_ui::text::{self, TextBatch};
+use crate::gpu_ui::text::{self, FontFace, FontSlant, TextBatch};
 
 #[derive(Clone, Copy)]
 struct PaintStyle {
@@ -14,6 +14,8 @@ struct PaintStyle {
     background: Option<[f32; 4]>,
     font_size: f32,
     line_height: f32,
+    face: FontFace,
+    slant: FontSlant,
     border_color: [f32; 4],
     border_width: f32,
     border_visible: bool,
@@ -35,6 +37,18 @@ impl PaintStyle {
                 .line_height
                 .or_else(|| inherited.map(|style| style.line_height))
                 .unwrap_or_else(|| text::metrics(text::DEFAULT_FONT_SIZE).natural_line_height()),
+            face: resolved
+                .font_family
+                .as_deref()
+                .map(font_face_for_css_family)
+                .or_else(|| inherited.map(|style| style.face))
+                .unwrap_or(FontFace::Inconsolata),
+            slant: resolved
+                .font_style
+                .as_deref()
+                .map(font_slant_for_css_style)
+                .or_else(|| inherited.map(|style| style.slant))
+                .unwrap_or(FontSlant::Normal),
             border_color: resolved.border_color.unwrap_or(theme.border),
             border_width: resolved.border_width.unwrap_or(1.0),
             border_visible: resolved.border_color.is_some() || resolved.border_width.is_some(),
@@ -55,7 +69,7 @@ impl PaintStyle {
         value: &str,
         color: Option<[f32; 4]>,
     ) {
-        text::queue_left_sized(
+        text::queue_left_sized_with_font(
             text_out,
             x,
             y,
@@ -63,6 +77,8 @@ impl PaintStyle {
             color.unwrap_or(self.text),
             self.font_size,
             self.line_height,
+            self.face,
+            self.slant,
         );
     }
 
@@ -77,7 +93,7 @@ impl PaintStyle {
         color: Option<[f32; 4]>,
     ) {
         let section_color = color.unwrap_or(self.text);
-        text::queue_wrapped_sized(
+        text::queue_wrapped_sized_with_font(
             text_out,
             x,
             y,
@@ -87,7 +103,28 @@ impl PaintStyle {
             section_color,
             self.font_size,
             self.line_height,
+            self.face,
+            self.slant,
         );
+    }
+}
+
+fn font_face_for_css_family(family: &str) -> FontFace {
+    let family = family.to_ascii_lowercase();
+    if family.contains("noto sans sc") || family.contains("cjk") {
+        FontFace::NotoSansSc
+    } else if family.contains("mono") || family.contains("inconsolata") {
+        FontFace::Inconsolata
+    } else {
+        FontFace::Default
+    }
+}
+
+fn font_slant_for_css_style(style: &str) -> FontSlant {
+    if style.eq_ignore_ascii_case("italic") || style.to_ascii_lowercase().starts_with("oblique") {
+        FontSlant::Italic
+    } else {
+        FontSlant::Normal
     }
 }
 
@@ -97,7 +134,7 @@ mod tests {
     use crate::gpu_ui::geometry::Rect;
     use crate::gpu_ui::html::style::ResolvedStyle;
     use crate::gpu_ui::shapes::ShapeInstance;
-    use crate::gpu_ui::text::{TextBatch, TextSection};
+    use crate::gpu_ui::text::{FontFace, FontSlant, TextBatch, TextSection};
 
     #[test]
     fn text_properties_inherit_without_inheriting_background() {
@@ -139,6 +176,8 @@ mod tests {
                 text: "clipped".to_string(),
                 color: [1.0; 4],
                 font_size: 14.0,
+                face: FontFace::Inconsolata,
+                slant: FontSlant::Normal,
             }],
         };
         clip_text(&mut text, clip);
@@ -548,10 +587,10 @@ fn paint_inlines(
     let mut y = bounds.y + 2.0;
     let right = bounds.x + bounds.width;
     for inline in inlines {
-        let (text, color) = match inline {
-            Inline::Text(t) => (t.as_str(), style.text),
-            Inline::Bold(t) => (t.as_str(), style.text),
-            Inline::Italic(t) => (t.as_str(), [0.35, 0.35, 0.35, 1.0]),
+        let (text, color, slant) = match inline {
+            Inline::Text(t) => (t.as_str(), style.text, style.slant),
+            Inline::Bold(t) => (t.as_str(), style.text, style.slant),
+            Inline::Italic(t) => (t.as_str(), [0.35, 0.35, 0.35, 1.0], FontSlant::Italic),
         };
         (x, y) = paint_inline_run(
             text_out,
@@ -563,6 +602,8 @@ fn paint_inlines(
             color,
             style.font_size,
             style.line_height,
+            style.face,
+            slant,
         );
     }
 }
@@ -577,6 +618,8 @@ fn paint_inline_run(
     color: [f32; 4],
     font_size: f32,
     line_height: f32,
+    face: FontFace,
+    slant: FontSlant,
 ) -> (f32, f32) {
     let char_w = text::char_width(font_size);
     let mut line_start = x;
@@ -584,7 +627,7 @@ fn paint_inline_run(
     for ch in text.chars() {
         if x + char_w > right && x > left {
             if !line.is_empty() {
-                text::queue_left_sized(
+                text::queue_left_sized_with_font(
                     text_out,
                     line_start,
                     y,
@@ -592,6 +635,8 @@ fn paint_inline_run(
                     color,
                     font_size,
                     line_height,
+                    face,
+                    slant,
                 );
                 line.clear();
             }
@@ -603,7 +648,7 @@ fn paint_inline_run(
         x += char_w;
     }
     if !line.is_empty() {
-        text::queue_left_sized(
+        text::queue_left_sized_with_font(
             text_out,
             line_start,
             y,
@@ -611,6 +656,8 @@ fn paint_inline_run(
             color,
             font_size,
             line_height,
+            face,
+            slant,
         );
     }
     (x, y)

@@ -10,6 +10,7 @@ const COMPACT_STYLE_FIELDS = [
   'lineHeightPx',
   'fontWeight',
   'fontStyle',
+  'fontFamily',
   'textAlign',
   'whiteSpace',
   'marginLeftPx',
@@ -485,6 +486,7 @@ function applyDeclaration(style, name, value, context = null) {
   if (prop === 'line-height') return applyLineHeight(style, raw, context);
   if (prop === 'font-weight') return applyNormalizedField(style, 'fontWeight', raw.toLowerCase());
   if (prop === 'font-style') return applyNormalizedField(style, 'fontStyle', raw.toLowerCase());
+  if (prop === 'font-family') return applyNormalizedField(style, 'fontFamily', collapseWhitespace(raw).toLowerCase());
   if (prop === 'text-align') return applyNormalizedField(style, 'textAlign', raw.toLowerCase());
   if (prop === 'white-space') return applyNormalizedField(style, 'whiteSpace', raw.toLowerCase());
   if (prop === 'margin-left') return applyNormalizedField(style, 'marginLeftPx', parsePx(raw));

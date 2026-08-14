@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub const DEFAULT_FONT_SIZE: f32 = 14.0;
+pub use trueos_helio_runtime::picasso_scene::{FontFace, FontSlant};
 
 #[derive(Clone, Debug, Default)]
 pub struct TextSection {
@@ -13,6 +14,18 @@ pub struct TextSection {
     /// CSS `font-size` in logical pixels. The renderer converts this em size
     /// to the bundled font's `ab_glyph` scale at the final handoff.
     pub font_size: f32,
+    /// Warm FontKernel face to use when the backend supports retained lookup.
+    #[cfg_attr(
+        not(any(test, target_os = "trueos", target_os = "zkvm")),
+        allow(dead_code)
+    )]
+    pub face: FontFace,
+    /// Synthetic/face slant request; no outline data is stored in this row.
+    #[cfg_attr(
+        not(any(test, target_os = "trueos", target_os = "zkvm")),
+        allow(dead_code)
+    )]
+    pub slant: FontSlant,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -79,6 +92,8 @@ fn push_section(
     text: &str,
     color: [f32; 4],
     font_size: f32,
+    face: FontFace,
+    slant: FontSlant,
 ) {
     if text.is_empty() || font_size <= 0.0 {
         return;
@@ -91,6 +106,8 @@ fn push_section(
         text: text.to_string(),
         color,
         font_size,
+        face,
+        slant,
     });
 }
 
@@ -126,10 +143,36 @@ pub fn queue_left_sized(
     font_size: f32,
     line_height: f32,
 ) {
+    queue_left_sized_with_font(
+        batch,
+        x,
+        y,
+        text,
+        color,
+        font_size,
+        line_height,
+        FontFace::Inconsolata,
+        FontSlant::Normal,
+    );
+}
+
+pub fn queue_left_sized_with_font(
+    batch: &mut TextBatch,
+    x: f32,
+    y: f32,
+    text: &str,
+    color: [f32; 4],
+    font_size: f32,
+    line_height: f32,
+    face: FontFace,
+    slant: FontSlant,
+) {
     let cw = char_width(font_size);
     let width = text.chars().count() as f32 * cw;
     let height = line_height.max(metrics(font_size).natural_line_height());
-    push_section(batch, x, y, width, height, text, color, font_size);
+    push_section(
+        batch, x, y, width, height, text, color, font_size, face, slant,
+    );
 }
 
 #[allow(dead_code)]
@@ -167,6 +210,34 @@ pub fn queue_wrapped_sized(
     font_size: f32,
     line_height: f32,
 ) {
+    queue_wrapped_sized_with_font(
+        batch,
+        x,
+        y,
+        text,
+        max_width,
+        max_height,
+        color,
+        font_size,
+        line_height,
+        FontFace::Inconsolata,
+        FontSlant::Normal,
+    );
+}
+
+pub fn queue_wrapped_sized_with_font(
+    batch: &mut TextBatch,
+    x: f32,
+    y: f32,
+    text: &str,
+    max_width: f32,
+    max_height: f32,
+    color: [f32; 4],
+    font_size: f32,
+    line_height: f32,
+    face: FontFace,
+    slant: FontSlant,
+) {
     if text.is_empty() || font_size <= 0.0 {
         return;
     }
@@ -190,6 +261,8 @@ pub fn queue_wrapped_sized(
             &line,
             color,
             font_size,
+            face,
+            slant,
         );
     }
 }

@@ -31,6 +31,7 @@ export const INHERITED_STYLE_FIELDS = Object.freeze([
   'lineHeightFactor',
   'fontWeight',
   'fontStyle',
+  'fontFamily',
   'textAlign',
   'whiteSpace',
 ]);
@@ -58,6 +59,7 @@ export function createComputedStyle(tagName = '', path = '', parentStyle = null)
     lineHeightFactor: null,
     fontWeight: 'normal',
     fontStyle: 'normal',
+    fontFamily: 'sans-serif',
     textAlign: 'left',
     whiteSpace: tag === 'pre' ? 'pre' : 'normal',
     marginLeftPx: 0,
