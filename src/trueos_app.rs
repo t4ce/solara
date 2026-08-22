@@ -127,7 +127,6 @@ impl SolaraView {
         }
         let previous = (self.frame.width(), self.frame.height());
         retry_busy(|| self.frame.resize(width, height))?;
-        self.font_canvas_dirty = true;
         self.needs_present = true;
         let _ = self.clamp_origin();
         self.sync_dom_viewport();
@@ -367,6 +366,13 @@ impl SolaraView {
         let mut quads = Vec::with_capacity(commands.len());
         for command in commands {
             match command {
+                // SceneDB retains the canonical document backdrop at order 0,
+                // while begin_sprite_frame performs the identical full-frame
+                // clear. Keep the row in the scene shadow, but do not make the
+                // GPU paint the same background twice on every viewport move.
+                LoweredCommand::SolidSpan {
+                    order: 0, color, ..
+                } if color == BACKGROUND => {}
                 LoweredCommand::SolidSpan {
                     x,
                     y,
