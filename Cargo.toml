@@ -3,7 +3,7 @@ name = "solara"
 version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
-description = "A small experimental browser built with Rust and QuickJS."
+description = "TRUEOS-first Solara placeholder; browser/rendering work is currently inactive."
 default-run = "solara"
 readme = "README.md"
 license = "MIT"
@@ -20,8 +20,6 @@ include = [
     "preview.html",
     "src/**/*.rs",
     "src/**/*.js",
-    "src/**/*.wgsl",
-    "crates/solara-wgpu-shim/**",
     "docs/demoui.html",
     "docs/demoui.css",
     "docs/TextAndBorders.html",
@@ -32,51 +30,21 @@ include = [
     "docs/youtube-js-probe.md",
 ]
 
-[dependencies]
-serde_json = "1.0"
-trueos-helio-runtime = { version = "0.1.0", path = "../../../TRUEOS/crates/trueos-helio-runtime" }
-url = "2"
-
 [features]
 default = []
-gpu-text-only = ["solara-wgpu-shim/text-only"]
-gpu-visual-debug = ["solara-wgpu-shim/visual-debug"]
-# Compile the DOM -> retained SceneDB compiler without selecting a window or a
-# UI4 presentation backend.  TRUEOS uses this path as its browser boundary;
-# the current UI4 renderer is only one consumer of the resulting scene.
-headless-picasso = []
-# Opt-in first execution step.  It exposes only the bounded scene-patch
-# capability documented in docs/headless-picasso-map.md; page scripts remain
-# inert unless the document explicitly selects this step.
-sandboxed-scene-js = ["headless-picasso"]
-# A Blueprint always includes the current bounded feature step.  The source
-# directive additionally selects the TRUEOS `ui4-scene` dependency feature.
-trueos-blueprint = ["sandboxed-scene-js"]
-youtube-js-probe = []
-
+# The browser, DOM, WGPU, and UI4 scene paths are intentionally inactive on
+# this branch. These names remain only as an explicit record that no renderer
+# feature is selected while the TRUEOS-first entry is being rebuilt.
+trueos-first = []
 [[bin]]
 name = "solara"
 path = "src/main.rs"
 
-[[bin]]
-name = "youtube-js-probe"
-path = "src/bin/youtube_js_probe.rs"
-required-features = ["youtube-js-probe"]
-
-[target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
-env_logger = "0.11.11"
-rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
-solara-wgpu-shim = { version = "0.1.0", path = "crates/solara-wgpu-shim" }
-ureq = "3.3.0"
-winit = "0.30"
-
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+trueos = { path = "../../api" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 
 [workspace]
-members = ["crates/solara-wgpu-shim"]
-exclude = ["vendor/RustQJSDom"]
 resolver = "3"

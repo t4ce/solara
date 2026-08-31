@@ -1,30 +1,14 @@
-// trueos-blueprint: features=["ui4-scene", "headless-picasso", "sandboxed-scene-js"]
-
-mod gpu_ui;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod trueos_app;
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-const DEFAULT_LOG_FILTER: &str = "warn,sctk_adwaita::buttons=error";
+// trueos-blueprint: features=["trueos-first"]
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 fn main() {
-    let mut logger = env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER),
-    );
-    // sctk-adwaita 0.10 warns when GNOME supplies a valid empty left
-    // title-bar button list. Keep that dependency bug quiet even when a
-    // workspace-wide RUST_LOG=warn overrides the default filter.
-    logger.parse_filters("sctk_adwaita::buttons=error");
-    let _ = logger.try_init();
-    let input = std::env::args().skip(1).last();
-    if let Err(error) = gpu_ui::run(input) {
-        eprintln!("solara: {error}");
-        std::process::exit(1);
-    }
+    println!("solara: TRUEOS-first inert host placeholder (no browser or renderer)");
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() {
-    trueos_app::run();
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        "solara: TRUEOS-first inert entry; no Frame, text rows, shapes, or presentation",
+    );
 }

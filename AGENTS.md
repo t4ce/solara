@@ -1,15 +1,26 @@
 # Repository Guidelines
 
+> Branch note (`true`): the active Solara binary is intentionally inert while
+> the TRUEOS-first rendering boundary is rebuilt. The browser/DOM sources are
+> retained as research material but are not linked. Do not assume the legacy
+> WGPU, Linux window, UI4 frame, or Picasso presentation paths are active.
+
 ## Project Structure & Module Organization
 
-Solara is a Rust 2024 experimental browser and GPU-rendering project. `src/main.rs` is the binary entry point. Most implementation lives under `src/gpu_ui/`: `app.rs` manages the window and event loop, `loader.rs` fetches page resources, and `renderer.rs` adapts Solara paint records to the dedicated `crates/solara-wgpu-shim` boundary. That shim owns WGPU, glyph rendering, WGSL, and its bundled font. HTML parsing, layout, and painting are grouped in `src/gpu_ui/html/`.
+Solara is a Rust 2024 experimental browser project. `src/main.rs` is the only
+active source on this branch. It provides an inert host entry and a minimal
+TRUEOS log-and-return entry. Historical browser work remains under
+`src/gpu_ui/`, including HTML parsing, layout, and painting experiments, but it
+is not declared as a module or compiled. The former WGPU shim crate and shader
+sources have been removed; its bundled font remains inactive for future text
+work.
 
 Reference material and demo inputs live in `docs/`, notably `demoui.html`, `demoui.css`, and `elements.md`. Cargo build output belongs in `target/` and must not be committed.
 
 ## Build, Test, and Development Commands
 
 - `cargo build --locked`: compile using the committed dependency lockfile.
-- `cargo run`: launch the bundled demo; pass a path or URL after `--` to load another page.
+- `cargo run`: print the inert host placeholder and exit without opening a window.
 - `cargo check --locked`: run a fast type and borrow check without producing a binary.
 - `cargo test --locked`: run all unit and integration tests; this is also the publish workflow's test command.
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
@@ -23,7 +34,10 @@ Use `rustfmt` defaults (four-space indentation) and keep modules focused on one 
 
 ## Testing Guidelines
 
-Add focused unit tests in a colocated `#[cfg(test)] mod tests`. Use descriptive names such as `loads_http_html_and_relative_stylesheet`. Add integration tests under `tests/` when behavior crosses module boundaries. For renderer or layout changes, run `cargo run` and inspect the demo; document the manual scenario in the pull request.
+Add focused unit tests in a colocated `#[cfg(test)] mod tests`. Use descriptive
+names and add integration tests under `tests/` when behavior crosses module
+boundaries. Until a renderer is deliberately reintroduced, validate that
+`cargo run` remains inert and that the dependency graph remains free of WGPU.
 
 ## Commit & Pull Request Guidelines
 

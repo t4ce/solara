@@ -1,30 +1,24 @@
 # Solara
 
-Solara is a small experimental browser built with Rust and QuickJS.
+Solara is currently a TRUEOS-first integration placeholder.
 
-The goal is to use Rust for the browser shell, resource loading, document model, and rendering pipeline, while QuickJS executes page JavaScript through a lightweight host API that connects the script runtime to the browser environment.
+The repository retains the browser experiments for later work, but this branch
+has one deliberate job: prove the TRUEOS Blueprint entry and dependency
+boundary before reintroducing UI.
 
-> Current status: RustQJSDom supplies Solara's QuickJS runtime, Parse5 DOM, Lightning CSS cascade, and asset-request index. Solara retains that canonical artifact/runtime pair, resolves favicon and resource URLs, and hands authored computed styles to its existing paint pipeline. TRUEOS compiles this through a headless retained Picasso scene before UI4 presents it. Page-script DOM bindings are still under development; the separately opt-in `sandboxed-scene-js` step exposes only a bounded scene-patch capability.
+> Current status: the browser and renderer sources are retained as inactive research material, but the active binary is deliberately inert. The TRUEOS branch currently requests no UI4 frame, text canvas, shape pipeline, Picasso lowering, WGPU surface, Linux window, QuickJS runtime, or DOM compilation.
 
-## Goals
+## Current boundary
 
-- Implement the core flow in Rust for better control over memory, concurrency, and system integration.
-- Use QuickJS as the embedded JavaScript engine for a lightweight ECMAScript runtime.
-- Build a simplified browser model focused on URL loading, HTML/CSS parsing, DOM construction, script execution, and basic rendering.
-- Keep the codebase small, readable, and experimental, making it useful for learning how browsers work internally.
-
-## Non-Goals
-
-Solara is not a replacement for Chrome, Firefox, or Safari. In its early stages, it does not aim for full web standards compatibility, advanced optimization, or a production-grade security sandbox.
+The active `solara` binary is inert on Linux and on TRUEOS. Linux prints a
+headless placeholder and exits. TRUEOS logs the same state and returns. It does
+not request a UI4 `Frame`, text rows/canvas, shapes, Picasso lowering, or
+presentation. The `trueos-first` feature is intentionally empty and exists to
+make Blueprint selection explicit.
 
 ## Requirements
 
-- Rust nightly
-- Cargo
-- A C compiler for the vendored QuickJS runtime
-- Python 3 and Node.js for the isolated YouTube media-cache bridge
-- Linux GStreamer runtime plugins for `decodebin`, `videoconvert`, `videoscale`,
-  and `fdsink`, plus a decoder matching the cached YouTube representation
+- Rust nightly and Cargo
 
 The project uses Rust 2024 edition.
 
@@ -36,26 +30,11 @@ Clone the repository:
 git clone https://github.com/t4ce/solara.git
 ```
 
-Then run the following command from the project root:
+Then run the following command from the project root. It prints an inert host
+placeholder and opens no window:
 
 ```bash
 cargo build --locked
-```
-
-Run the default CSS visual fixture. It loads `TextAndBorders.html` and its
-linked stylesheet, then presents 27 fixed-coordinate text and border samples
-using Solara's default monospaced face:
-
-```bash
-cargo run
-```
-
-Pass a YouTube watch URL to retain the existing one-window playback ladder. It
-shows the URL, an advertised-resolution dropdown, and a size-respecting
-`<video>` box that conditionally plays its cached media:
-
-```bash
-cargo run -- 'https://www.youtube.com/watch?v=nXvnof8fTBc'
 ```
 
 Run checks:
@@ -65,89 +44,20 @@ cargo check --locked
 cargo test --locked
 ```
 
-On Linux, Solara leaves WGPU 30's Vulkan validation layer disabled because its
-current swapchain path reuses an acquire fence without resetting it. Set
-`WGPU_VALIDATION=1` when explicitly debugging the backend.
+The `trueos-first` feature is intentionally empty and documents the branch
+selection used by Blueprint packaging. No WGPU or `wgpu_text` dependency is in
+the active graph.
 
-For an explicit YouTube URL, `docs/video_demo.html` is parsed by
-RustQJSDom/Parse5 and styled by its Lightning CSS stage before Solara builds
-layout nodes. The exact watch response, player JavaScript, signed SABR URL, and
-ustreamer capsule are refreshed under
-`solara/media/youtube/<video-id>` in the same cache root. Separately, a pinned,
-SHA-256-verified yt-dlp zipapp uses its embedded-player client profile and EJS
-support to cache one MP4 representation as `video-<itag>.mp4`. Solara offers one
-MP4 choice per advertised resolution. Startup prefers 1440p and falls back once
-to the highest lower resolution when unavailable; changing the Solara-rendered
-dropdown issues one request for that selection. Each file is checked against
-the current watch response's byte length and ISO BMFF header. A complete atomic
-cache artifact satisfies the current conservative ten-second readiness
-estimate; only then does Linux GStreamer attempt playback. Missing media or
-codec support leaves the video box empty without affecting the window. Solara
-retains decoded RGBA frames, computes the video box, and composites them in its
-own WGPU window.
-`docs/demoui.html` remains the render-digest integration fixture. See [the
-engine handoff notes](docs/engine-handoff.md) for the boundary and update
-workflow.
-
-For the headless compiler boundary, the first sandboxed JavaScript feature
-step, and the separation between Solara's SceneDB shadow and Picasso's hosted
-redb asset store, see the [headless-to-Picasso map](docs/headless-picasso-map.md).
-
-The static scene supports mixed CSS font sizes end to end. Computed `font-size`
-and `line-height` values—including inherited sizes, heading defaults, relative
-`em`/`rem`/percentage values, and absolute CSS units—drive both layout and each
-glyph run. This is an upfront, single-scene calculation; it does not add font
-animation or a retained animation pass.
-
-Solara currently uses Inconsolata as its single layout face. Both the desktop
-WGPU renderer and the TRUEOS UI4 text scene paint with that same face, so the
-monospaced advances used for wrapping remain identical across backends.
+Browser fixtures, RustQJSDom, and the previous engine notes remain in the tree
+as inactive research material and are not dependencies of this branch.
 
 ## Project Structure
 
-```text
-.
-├── Cargo.toml
-├── Cargo.lock
-├── LICENSE
-├── README.md
-├── crates
-│   └── solara-wgpu-shim
-├── docs
-│   └── engine-handoff.md
-├── src
-│   ├── main.rs
-│   └── gpu_ui
-└── vendor
-    └── RustQJSDom
-```
+The active source surface is just `src/main.rs`.
 
-`crates/solara-wgpu-shim` is the sole direct owner of WGPU and the glyph stack.
-It exposes the full upstream APIs plus Solara's shared GPU context, per-window
-surface, acquired frame, and painter composition. The root application depends
-only on this shim. The shim is always present; there is no separate no-WGPU
-build mode.
-
-Run the text-only renderer, which keeps the WGPU surface and glyph path but
-compiles out Solara's shape pipeline:
-
-```bash
-cargo run --features gpu-text-only
-```
-
-The shim publishes and tests the exact WGPU call inventory for this mode as
-`text_only::API_SUBSET`; each matching call is tagged `TEXT_ONLY_WGPU_API` in
-the source.
-
-Enable the optional visual GPU activity rail with:
-
-```bash
-cargo run --features gpu-visual-debug
-```
-
-The five markers show surface configuration, frame acquisition, shape upload,
-glyph upload, and submit/present activity. The feature is disabled by default
-and adds no overlay state or drawing work to normal builds.
+The old `crates/solara-wgpu-shim` crate and shader sources are removed on this
+branch. Its font assets remain as inactive research material. The dependency
+lockfile contains no WGPU, Winit, or RustQJSDom packages for the active graph.
 
 ## Roadmap
 
