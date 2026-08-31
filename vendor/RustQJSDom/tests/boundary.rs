@@ -41,4 +41,9 @@ fn checked_in_schema_matches_the_public_contract_version() {
         schema["properties"]["styleIndex"]["properties"]["backend"]["const"],
         "lightningcss@1.0.0-alpha.70"
     );
+    assert_eq!(
+        schema["$defs"]["computedStyle"]["properties"]["cascadedDeclarations"]["additionalProperties"]
+            ["type"],
+        "string"
+    );
 }

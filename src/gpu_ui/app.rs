@@ -25,8 +25,9 @@ use crate::gpu_ui::youtube_media::{self, YoutubeMediaChoice};
 
 const WINDOW_WIDTH: u32 = 960;
 const WINDOW_HEIGHT: u32 = 720;
+const TEXT_AND_BORDERS_HTML_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/docs/TextAndBorders.html");
 const VIDEO_DEMO_HTML_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/video_demo.html");
-const YOUTUBE_WATCH_URL: &str = "https://www.youtube.com/watch?v=nXvnof8fTBc";
 const YOUTUBE_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
 
@@ -37,45 +38,75 @@ struct YoutubeStartup {
     media_path: Option<PathBuf>,
 }
 
-pub fn run(watch_url: Option<String>) -> Result<(), String> {
-    let watch_url = youtube_watch_url(watch_url.as_deref())?;
-    let (youtube_bootstrap, youtube_choices, selected_choice, youtube_media_path) =
-        match fetch_youtube_bootstrap(&watch_url) {
-            Ok(startup) => {
-                println!(
-                    "solara: passive YouTube bootstrap captured (video {}; {} adaptive formats)",
-                    startup.bootstrap.video_id,
-                    startup.bootstrap.adaptive_formats.len(),
-                );
-                (
-                    Some(startup.bootstrap),
-                    startup.choices,
-                    startup.selected,
-                    startup.media_path,
-                )
-            }
-            Err(error) => {
-                eprintln!(
-                    "solara: passive YouTube bootstrap unavailable; continuing without playback: {error}"
-                );
-                (None, Vec::new(), None, None)
-            }
-        };
-    let mut initial_pages = load_initial_pages(watch_url.as_str())?;
-    let labels = if youtube_choices.is_empty() {
-        vec!["No MP4 formats available".to_owned()]
-    } else {
-        youtube_choices
-            .iter()
-            .map(|choice| choice.label.clone())
-            .collect()
+pub fn run(input: Option<String>) -> Result<(), String> {
+    let (
+        mut initial_pages,
+        watch_url,
+        youtube_bootstrap,
+        youtube_choices,
+        selected_choice,
+        youtube_media_path,
+    ) = match input {
+        None => (
+            load_text_and_borders_initial_pages()?,
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+        ),
+        Some(input) => {
+            let watch_url = youtube_watch_url(input.as_str())?;
+            let (youtube_bootstrap, youtube_choices, selected_choice, youtube_media_path) =
+                match fetch_youtube_bootstrap(&watch_url) {
+                    Ok(startup) => {
+                        println!(
+                            "solara: passive YouTube bootstrap captured (video {}; {} adaptive formats)",
+                            startup.bootstrap.video_id,
+                            startup.bootstrap.adaptive_formats.len(),
+                        );
+                        (
+                            Some(startup.bootstrap),
+                            startup.choices,
+                            startup.selected,
+                            startup.media_path,
+                        )
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "solara: passive YouTube bootstrap unavailable; continuing without playback: {error}"
+                        );
+                        (None, Vec::new(), None, None)
+                    }
+                };
+            (
+                load_youtube_initial_pages(watch_url.as_str())?,
+                Some(watch_url),
+                youtube_bootstrap,
+                youtube_choices,
+                selected_choice,
+                youtube_media_path,
+            )
+        }
     };
-    for page in &mut initial_pages {
-        page.document.configure_select(
-            "format-select",
-            labels.clone(),
-            selected_choice.unwrap_or(0),
-        );
+    if watch_url.is_some() {
+        let labels = if youtube_choices.is_empty() {
+            vec!["No MP4 formats available".to_owned()]
+        } else {
+            youtube_choices
+                .iter()
+                .map(|choice| choice.label.clone())
+                .collect()
+        };
+        for page in &mut initial_pages {
+            page.document.configure_select(
+                "format-select",
+                labels.clone(),
+                selected_choice.unwrap_or(0),
+            );
+        }
+    }
+    for page in &initial_pages {
         println!("Loading {} ({})", page.url, page.label);
     }
 
@@ -96,7 +127,9 @@ pub fn run(watch_url: Option<String>) -> Result<(), String> {
             proxy.clone(),
         ))
     } else {
-        println!("solara: cached YouTube playback source is not ready; video remains empty");
+        if watch_url.is_some() {
+            println!("solara: cached YouTube playback source is not ready; video remains empty");
+        }
         None
     };
     let mut app = GpuUiApp {
@@ -119,8 +152,7 @@ pub fn run(watch_url: Option<String>) -> Result<(), String> {
         .map_err(|error| format!("event loop failed: {error}"))
 }
 
-fn youtube_watch_url(input: Option<&str>) -> Result<Url, String> {
-    let raw_url = input.unwrap_or(YOUTUBE_WATCH_URL);
+fn youtube_watch_url(raw_url: &str) -> Result<Url, String> {
     let url = Url::parse(raw_url)
         .map_err(|error| format!("invalid YouTube watch URL {raw_url:?}: {error}"))?;
     if url.scheme() != "https" {
@@ -264,7 +296,15 @@ struct InitialPage {
     plays_cached_video: bool,
 }
 
-fn load_initial_pages(watch_url: &str) -> Result<Vec<InitialPage>, String> {
+fn load_text_and_borders_initial_pages() -> Result<Vec<InitialPage>, String> {
+    Ok(vec![load_initial_page(
+        Some(TEXT_AND_BORDERS_HTML_PATH),
+        "Text and borders CSS fixture",
+        false,
+    )?])
+}
+
+fn load_youtube_initial_pages(watch_url: &str) -> Result<Vec<InitialPage>, String> {
     let mut page = load_initial_page(Some(VIDEO_DEMO_HTML_PATH), "YouTube cache playback", true)?;
     page.document.set_primary_heading_text(watch_url);
     Ok(vec![page])
@@ -300,7 +340,7 @@ struct GpuUiApp {
     video_tx: SyncSender<VideoPacket>,
     video_proxy: EventLoopProxy<VideoEvent>,
     video_started: bool,
-    watch_url: Url,
+    watch_url: Option<Url>,
     youtube_bootstrap: Option<YoutubeWatchBootstrap>,
     youtube_choices: Vec<YoutubeMediaChoice>,
     selected_choice: Option<usize>,
@@ -312,6 +352,9 @@ struct GpuUiApp {
 impl GpuUiApp {
     fn request_choice(&mut self, index: usize) {
         let Some(bootstrap) = self.youtube_bootstrap.clone() else {
+            return;
+        };
+        let Some(watch_url) = self.watch_url.clone() else {
             return;
         };
         let Some(choice) = self.youtube_choices.get(index).cloned() else {
@@ -337,7 +380,6 @@ impl GpuUiApp {
             "solara: format changed to {} (itag {}); requesting once",
             choice.label, choice.itag
         );
-        let watch_url = self.watch_url.clone();
         let packet_tx = self.video_tx.clone();
         let proxy = self.video_proxy.clone();
         thread::Builder::new()
@@ -722,13 +764,50 @@ impl ApplicationHandler<VideoEvent> for GpuUiApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{VIDEO_DEMO_HTML_PATH, load_initial_pages, youtube_watch_url};
+    use super::{
+        TEXT_AND_BORDERS_HTML_PATH, VIDEO_DEMO_HTML_PATH, load_text_and_borders_initial_pages,
+        load_youtube_initial_pages, youtube_watch_url,
+    };
     use crate::gpu_ui::html::{RenderBatch, collect_batch};
 
     #[test]
-    fn default_session_is_the_single_video_ladder_window() {
+    fn default_session_is_the_text_and_borders_fixture() {
+        let page = load_text_and_borders_initial_pages()
+            .expect("text-and-borders fixture loads")
+            .pop()
+            .expect("one fixture page");
+        assert_eq!(page.label, "Text and borders CSS fixture");
+        assert!(!page.plays_cached_video);
+        assert!(page.url.path().ends_with("/docs/TextAndBorders.html"));
+        assert!(std::path::Path::new(TEXT_AND_BORDERS_HTML_PATH).is_file());
+        assert!(page.document.video_bounds().is_none());
+
+        let mut batch = RenderBatch::default();
+        collect_batch(&page.document, 1.0, &mut batch);
+        assert!(
+            batch
+                .text
+                .sections
+                .iter()
+                .any(|section| section.text.contains("10px solid") && section.font_size == 10.0)
+        );
+        assert!(
+            batch
+                .text
+                .sections
+                .iter()
+                .any(|section| section.text.contains("36px finish") && section.font_size == 36.0)
+        );
+        assert!(
+            batch.shapes.len() >= 28,
+            "board plus 27 samples draw borders"
+        );
+    }
+
+    #[test]
+    fn explicit_youtube_session_is_the_single_video_ladder_window() {
         let target = "https://www.youtube.com/watch?v=custom123&t=4";
-        let mut pages = load_initial_pages(target).expect("video demo loads");
+        let mut pages = load_youtube_initial_pages(target).expect("video demo loads");
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].label, "YouTube cache playback");
         assert!(pages[0].plays_cached_video);
@@ -759,12 +838,8 @@ mod tests {
 
     #[test]
     fn final_argument_accepts_only_https_youtube_targets() {
-        assert_eq!(
-            youtube_watch_url(None).unwrap().as_str(),
-            "https://www.youtube.com/watch?v=nXvnof8fTBc"
-        );
-        assert!(youtube_watch_url(Some("https://youtu.be/nXvnof8fTBc")).is_ok());
-        assert!(youtube_watch_url(Some("http://www.youtube.com/watch?v=test")).is_err());
-        assert!(youtube_watch_url(Some("https://example.com/watch?v=test")).is_err());
+        assert!(youtube_watch_url("https://youtu.be/nXvnof8fTBc").is_ok());
+        assert!(youtube_watch_url("http://www.youtube.com/watch?v=test").is_err());
+        assert!(youtube_watch_url("https://example.com/watch?v=test").is_err());
     }
 }

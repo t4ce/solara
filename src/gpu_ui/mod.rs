@@ -1,4 +1,31 @@
-//! wgpu renderer for demoui.html elements (excluding document structure tags).
+//! WGPU and headless retained rendering for Solara HTML documents.
+
+/// TRUEOS's built-in, no-handoff visual verification document.  Keep this URL
+/// stable because the headless stylesheet loader below uses it to resolve the
+/// bundled relative CSS without granting the resident app arbitrary I/O.
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+pub(crate) const TEXT_AND_BORDERS_DOCUMENT_URL: &str = "trueos://solara/docs/TextAndBorders.html";
+
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+const TEXT_AND_BORDERS_STYLESHEET_HREF: &str = "TextAndBorders.css";
+
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+const TEXT_AND_BORDERS_STYLESHEET_URL: &str = "trueos://solara/docs/TextAndBorders.css";
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod app;
@@ -229,8 +256,8 @@ impl HeadlessDocument {
 #[allow(dead_code)]
 pub(crate) fn embedded_headless_document(page_width: f32) -> Result<HeadlessDocument, String> {
     headless_document_for_html(
-        include_str!("../../docs/demoui.html"),
-        "trueos://solara/docs/demoui.html",
+        include_str!("../../docs/TextAndBorders.html"),
+        TEXT_AND_BORDERS_DOCUMENT_URL,
         page_width,
     )
 }
@@ -249,9 +276,21 @@ pub(crate) fn headless_document_for_html(
     source_url: &str,
     page_width: f32,
 ) -> Result<HeadlessDocument, String> {
-    use rust_qjs_dom::DomEngine;
+    use rust_qjs_dom::{DomEngine, LoadedStylesheet};
 
-    let mut engine = DomEngine::new().map_err(|error| format!("failed to start DOM: {error}"))?;
+    let mut engine = DomEngine::with_stylesheet_loader(|document_url, _base_href, href| {
+        if document_url == TEXT_AND_BORDERS_DOCUMENT_URL && href == TEXT_AND_BORDERS_STYLESHEET_HREF
+        {
+            return Ok(LoadedStylesheet::new(
+                TEXT_AND_BORDERS_STYLESHEET_URL,
+                include_str!("../../docs/TextAndBorders.css"),
+            ));
+        }
+        Err(format!(
+            "external stylesheet {href:?} is not bundled for headless source {document_url:?}"
+        ))
+    })
+    .map_err(|error| format!("failed to start DOM: {error}"))?;
     let artifact = engine
         .parse(source, source_url)
         .map_err(|error| format!("failed to parse document: {error}"))?;
@@ -264,7 +303,10 @@ pub(crate) fn headless_document_for_html(
 
 #[cfg(test)]
 mod tests {
-    use super::{clamped_pan_origin, clamped_vertical_pan, wheel_scroll_origin};
+    use super::{
+        TEXT_AND_BORDERS_DOCUMENT_URL, clamped_pan_origin, clamped_vertical_pan,
+        embedded_headless_document, wheel_scroll_origin,
+    };
 
     #[test]
     fn direct_vertical_pan_follows_drag_and_clamps_to_document() {
@@ -291,6 +333,30 @@ mod tests {
         assert_eq!(wheel_scroll_origin(1_270, -1, true, 2_000, 720), 1_280);
         assert_eq!(wheel_scroll_origin(0, -1, true, 500, 720), 0);
         assert_eq!(wheel_scroll_origin(120, -1, false, 2_000, 720), 120);
+    }
+
+    #[test]
+    fn bundled_trueos_fixture_loads_its_relative_stylesheet() {
+        let document = embedded_headless_document(960.0).expect("bundled fixture parses");
+        let dom = document.document.dom();
+        assert_eq!(dom.source.url, TEXT_AND_BORDERS_DOCUMENT_URL);
+        assert_eq!(dom.style_index.external_stylesheet_count, 1);
+        assert!(dom.style_index.load_errors.is_empty());
+        assert!(document.content_height() >= 720.0);
+
+        let sample = dom
+            .document
+            .find_element_by_id("sample-18")
+            .expect("outline sample");
+        let style = dom
+            .style_index
+            .style(sample.style_ref.expect("style ref"))
+            .expect("computed style");
+        assert!(style.cascaded_declarations.contains_key("outline"));
+        assert_eq!(
+            style.cascaded_declarations.get("position"),
+            Some(&String::from("absolute"))
+        );
     }
 
     #[cfg(feature = "headless-picasso")]

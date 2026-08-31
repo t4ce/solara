@@ -17,8 +17,8 @@ fn main() {
     // workspace-wide RUST_LOG=warn overrides the default filter.
     logger.parse_filters("sctk_adwaita::buttons=error");
     let _ = logger.try_init();
-    let watch_url = std::env::args().skip(1).last();
-    if let Err(error) = gpu_ui::run(watch_url) {
+    let input = std::env::args().skip(1).last();
+    if let Err(error) = gpu_ui::run(input) {
         eprintln!("solara: {error}");
         std::process::exit(1);
     }

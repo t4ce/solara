@@ -163,6 +163,14 @@ pub struct ComputedStyle {
     /// Consumers can distinguish page CSS from renderer-neutral user-agent defaults.
     #[serde(default)]
     pub authored_properties: Vec<String>,
+    /// Every winning declaration that the current CSS cascade observed.
+    ///
+    /// This intentionally remains an open property map: renderer-neutral
+    /// consumers can retain CSS properties before Solara grows a dedicated
+    /// typed field for each one. Values are Lightning-CSS-normalized text; the
+    /// existing compact fields below retain their present semantics.
+    #[serde(default)]
+    pub cascaded_declarations: BTreeMap<String, String>,
     pub display: Option<String>,
     pub color: Option<String>,
     pub background_color: Option<String>,

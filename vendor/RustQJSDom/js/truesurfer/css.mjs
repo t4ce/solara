@@ -25,6 +25,21 @@ const COMPACT_STYLE_FIELDS = [
   'borderColor',
 ];
 
+function cascadedDeclarationEntries(declarations) {
+  if (!declarations || typeof declarations !== 'object') return [];
+  return Object.keys(declarations)
+    .sort()
+    .map((name) => [name, String(declarations[name] == null ? '' : declarations[name])]);
+}
+
+function copyCascadedDeclarations(declarations) {
+  const copied = Object.create(null);
+  for (const [name, value] of cascadedDeclarationEntries(declarations)) {
+    copied[name] = value;
+  }
+  return copied;
+}
+
 function collapseWhitespace(s) {
   return String(s || '').replace(/\s+/g, ' ').trim();
 }
@@ -821,6 +836,7 @@ function compactStyleEntry(style) {
   entry.authoredProperties = Array.isArray(style && style.authoredProperties)
     ? style.authoredProperties.slice()
     : [];
+  entry.cascadedDeclarations = copyCascadedDeclarations(style && style.cascadedDeclarations);
   return entry;
 }
 
@@ -833,6 +849,7 @@ function compactStyleKey(style) {
     key += String(value);
   }
   key += `\x1f${JSON.stringify(Array.isArray(style && style.authoredProperties) ? style.authoredProperties : [])}`;
+  key += `\x1f${JSON.stringify(cascadedDeclarationEntries(style && style.cascadedDeclarations))}`;
   return key;
 }
 
@@ -995,14 +1012,18 @@ export function resolveNodeStyle(node, path, cssSection, ancestors, parentStyle 
     return priority(left) - priority(right);
   });
   const authoredProperties = [];
+  const cascadedDeclarations = Object.create(null);
   for (let i = 0; i < winnerKeys.length; i++) {
     const key = winnerKeys[i];
-    if (applyDeclaration(style, key, winners[key].value, fontContext)) {
+    const winner = winners[key];
+    cascadedDeclarations[key] = String(winner.value || '');
+    if (applyDeclaration(style, key, winner.value, fontContext)) {
       authoredProperties.push(key);
     }
   }
   authoredProperties.sort();
   style.authoredProperties = authoredProperties;
+  style.cascadedDeclarations = cascadedDeclarations;
 
   style.source = {
     matchedRules,
@@ -1023,6 +1044,7 @@ export function resolveInlineStyle(tagName, path, styleText, parentStyle = null)
       : DEFAULT_FONT_PX,
   };
   const authoredProperties = [];
+  const cascadedDeclarations = Object.create(null);
   if (parsed && Array.isArray(parsed.declarations)) {
     const declarations = normalizeDeclarationList(parsed.declarations).sort((left, right) => {
       const priority = (declaration) => {
@@ -1035,13 +1057,16 @@ export function resolveInlineStyle(tagName, path, styleText, parentStyle = null)
     });
     for (let i = 0; i < declarations.length; i++) {
       const declaration = declarations[i];
+      const name = String(declaration && declaration.name || '').toLowerCase();
+      const value = String(declaration && declaration.value || '');
+      if (name) cascadedDeclarations[name] = value;
       if (applyDeclaration(
         style,
-        declaration && declaration.name,
-        declaration && declaration.value,
+        name,
+        value,
         fontContext,
       )) {
-        authoredProperties.push(String(declaration && declaration.name || '').toLowerCase());
+        authoredProperties.push(name);
       }
     }
     authoredProperties.sort();
@@ -1051,6 +1076,7 @@ export function resolveInlineStyle(tagName, path, styleText, parentStyle = null)
       inline: declarations.length > 0,
     };
   }
+  style.cascadedDeclarations = cascadedDeclarations;
   return style;
 }
 

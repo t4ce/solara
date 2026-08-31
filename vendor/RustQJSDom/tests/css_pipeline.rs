@@ -55,6 +55,59 @@ fn lightning_css_runs_immediately_after_parse5_and_applies_the_cascade() {
 }
 
 #[test]
+fn retains_all_current_cascade_winners_for_later_renderer_enrichment() {
+    let mut engine = DomEngine::new().expect("engine starts");
+    let artifact = engine
+        .parse(
+            r#"
+                <style>
+                  #target { border-style: dotted; }
+                  main#target {
+                    border-top: 3px dashed rebeccapurple;
+                    border-style: double !important;
+                    border-radius: 2px 4px / 6px 8px;
+                    border-image: linear-gradient(red, blue) 30 / 10px / 1px round;
+                    border-inline-start-color: currentColor;
+                    outline: 1px dotted oklch(62% .18 250);
+                    box-shadow: 0 0 4px #123456;
+                    --site-border-token: 3px double currentColor;
+                  }
+                </style>
+                <main id="target">Border surface</main>
+            "#,
+            "https://example.test/declaration-surface",
+        )
+        .expect("styled document parses");
+    let style = style_for_id(&artifact, "target");
+
+    assert_eq!(
+        style.cascaded_declarations.get("border-style"),
+        Some(&String::from("double"))
+    );
+    for property in [
+        "border-top",
+        "border-radius",
+        "border-image",
+        "border-inline-start-color",
+        "outline",
+        "box-shadow",
+        "--site-border-token",
+    ] {
+        assert!(
+            style.cascaded_declarations.contains_key(property),
+            "cascaded declaration retained {property}"
+        );
+    }
+    assert!(
+        !style
+            .authored_properties
+            .iter()
+            .any(|property| property == "border-style"),
+        "the existing typed renderer subset remains unchanged"
+    );
+}
+
+#[test]
 fn browser_owned_loader_feeds_external_css_into_the_same_style_index() {
     let mut engine = DomEngine::with_stylesheet_loader(|document_url, base_href, href| {
         assert_eq!(document_url, "https://example.test/docs/page.html");

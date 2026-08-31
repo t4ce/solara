@@ -42,15 +42,17 @@ Then run the following command from the project root:
 cargo build --locked
 ```
 
-Run the one-window playback ladder. It shows the current YouTube target URL, an
-advertised-resolution dropdown, and a size-respecting `<video>` box that
-conditionally plays its cached media:
+Run the default CSS visual fixture. It loads `TextAndBorders.html` and its
+linked stylesheet, then presents 27 fixed-coordinate text and border samples
+using Solara's default monospaced face:
 
 ```bash
 cargo run
 ```
 
-Use a different YouTube watch URL as the single optional program argument:
+Pass a YouTube watch URL to retain the existing one-window playback ladder. It
+shows the URL, an advertised-resolution dropdown, and a size-respecting
+`<video>` box that conditionally plays its cached media:
 
 ```bash
 cargo run -- 'https://www.youtube.com/watch?v=nXvnof8fTBc'
@@ -67,9 +69,10 @@ On Linux, Solara leaves WGPU 30's Vulkan validation layer disabled because its
 current swapchain path reuses an acquire fence without resetting it. Set
 `WGPU_VALIDATION=1` when explicitly debugging the backend.
 
-The default `docs/video_demo.html` is parsed by RustQJSDom/Parse5 and styled by
-its Lightning CSS stage before Solara builds layout nodes. The exact watch
-response, player JavaScript, signed SABR URL, and ustreamer capsule are refreshed under
+For an explicit YouTube URL, `docs/video_demo.html` is parsed by
+RustQJSDom/Parse5 and styled by its Lightning CSS stage before Solara builds
+layout nodes. The exact watch response, player JavaScript, signed SABR URL, and
+ustreamer capsule are refreshed under
 `solara/media/youtube/<video-id>` in the same cache root. Separately, a pinned,
 SHA-256-verified yt-dlp zipapp uses its embedded-player client profile and EJS
 support to cache one MP4 representation as `video-<itag>.mp4`. Solara offers one

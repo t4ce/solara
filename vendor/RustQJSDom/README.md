@@ -161,8 +161,12 @@ contents, namespaces, attributes, doctypes, comments, and text are retained.
 
 The `styleIndex` is computed immediately after Parse5. Lightning CSS parses and
 minifies author CSS, while the renderer-neutral TrueSurfer cascade emits typed
-computed styles and an `authoredProperties` provenance list. A browser-owned
-callback may synchronously supply linked stylesheets before the cascade.
+computed styles, an `authoredProperties` provenance list, and an open
+`cascadedDeclarations` property map. The map retains every normalized winning
+declaration the current cascade observes—even when no typed renderer field
+exists for it—so a host can build a later render tree without discarding CSS
+surface area. A browser-owned callback may synchronously supply linked
+stylesheets before the cascade.
 
 The `assetIndex` enumerates resource requests from HTML, `srcset`, inline and
 embedded CSS, and loaded external CSS. It carries raw URL/base context and does

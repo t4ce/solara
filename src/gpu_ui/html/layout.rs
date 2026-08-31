@@ -4,13 +4,18 @@ use crate::gpu_ui::geometry::{BLOCK_GAP, CONTROL_H, PAGE_PAD, Rect, iframe_viewp
 use crate::gpu_ui::html::node::{
     ButtonType, ElementKind, HtmlNode, HtmlTag, InputType, inline_width,
 };
-use crate::gpu_ui::html::style;
+use crate::gpu_ui::html::style::{self, Position};
 use crate::gpu_ui::text;
 
 #[derive(Clone, Copy)]
 struct LayoutStyle {
     font_size: f32,
     line_height: f32,
+    position: Position,
+    left_px: Option<f32>,
+    top_px: Option<f32>,
+    width_px: Option<f32>,
+    height_px: Option<f32>,
 }
 
 impl LayoutStyle {
@@ -25,6 +30,11 @@ impl LayoutStyle {
                 .line_height
                 .or_else(|| inherited.map(|style| style.line_height))
                 .unwrap_or_else(|| text::metrics(text::DEFAULT_FONT_SIZE).natural_line_height()),
+            position: resolved.position,
+            left_px: resolved.left_px,
+            top_px: resolved.top_px,
+            width_px: resolved.width_px,
+            height_px: resolved.height_px,
         }
     }
 }
@@ -32,6 +42,8 @@ impl LayoutStyle {
 pub struct LayoutContext {
     pub page_width: f32,
     pub cursor_y: f32,
+    content_x: f32,
+    content_width: f32,
 }
 
 impl LayoutContext {
@@ -39,15 +51,30 @@ impl LayoutContext {
         Self {
             page_width,
             cursor_y: PAGE_PAD,
+            content_x: PAGE_PAD,
+            content_width: (page_width - PAGE_PAD * 2.0).max(0.0),
         }
     }
 
     pub fn content_width(&self) -> f32 {
-        self.page_width - PAGE_PAD * 2.0
+        self.content_width
+    }
+
+    fn content_x(&self) -> f32 {
+        self.content_x
+    }
+
+    fn for_box(bounds: Rect) -> Self {
+        Self {
+            page_width: bounds.width + PAGE_PAD * 2.0,
+            cursor_y: bounds.y,
+            content_x: bounds.x,
+            content_width: bounds.width,
+        }
     }
 
     fn place_block(&mut self, height: f32) -> Rect {
-        let rect = Rect::new(PAGE_PAD, self.cursor_y, self.content_width(), height);
+        let rect = Rect::new(self.content_x, self.cursor_y, self.content_width(), height);
         self.cursor_y += height + BLOCK_GAP;
         rect
     }
@@ -55,8 +82,10 @@ impl LayoutContext {
 
 pub fn layout_document(nodes: &mut [HtmlNode], page_width: f32, style_index: &StyleIndex) {
     let mut ctx = LayoutContext::new(page_width);
+    let initial_containing_block =
+        Rect::new(ctx.content_x(), ctx.cursor_y, ctx.content_width(), 0.0);
     for node in nodes {
-        layout_node(node, &mut ctx, style_index, None);
+        layout_node(node, &mut ctx, style_index, None, initial_containing_block);
     }
 }
 
@@ -74,15 +103,56 @@ fn layout_node(
     ctx: &mut LayoutContext,
     style_index: &StyleIndex,
     inherited: Option<LayoutStyle>,
+    containing_block: Rect,
 ) {
     let text_style = LayoutStyle::for_node(style_index, node, inherited);
+    if text_style.position == Position::Absolute {
+        node.bounds = layout_absolute_node(node, style_index, text_style, containing_block);
+        return;
+    }
+
+    node.bounds = layout_node_content(node, ctx, style_index, text_style, containing_block);
+}
+
+/// Lay out the fixture's `position: absolute` subset without consuming the
+/// normal-flow cursor of its parent.  The full CSS declaration remains in the
+/// DOM artifact; this intentionally accepts only resolved pixel offsets.
+fn layout_absolute_node(
+    node: &mut HtmlNode,
+    style_index: &StyleIndex,
+    text_style: LayoutStyle,
+    containing_block: Rect,
+) -> Rect {
+    let x = containing_block.x + text_style.left_px.unwrap_or(0.0);
+    let y = containing_block.y + text_style.top_px.unwrap_or(0.0);
+    let width = text_style
+        .width_px
+        .unwrap_or(containing_block.width)
+        .max(0.0);
+    let requested_height = text_style.height_px.map(|height| height.max(0.0));
+    let provisional = Rect::new(x, y, width, requested_height.unwrap_or(0.0));
+    let mut child_ctx = LayoutContext::for_box(provisional);
+    let content_bounds =
+        layout_node_content(node, &mut child_ctx, style_index, text_style, provisional);
+    let content_height = (child_ctx.cursor_y - y).max(content_bounds.height).max(0.0);
+
+    Rect::new(x, y, width, requested_height.unwrap_or(content_height))
+}
+
+fn layout_node_content(
+    node: &mut HtmlNode,
+    ctx: &mut LayoutContext,
+    style_index: &StyleIndex,
+    text_style: LayoutStyle,
+    containing_block: Rect,
+) -> Rect {
     let is_open = node.open;
-    node.bounds = match &mut node.kind {
+    match &mut node.kind {
         ElementKind::Element { tag, children } => {
             if tag.is_metadata() || matches!(tag, HtmlTag::Head) {
-                Rect::new(PAGE_PAD, ctx.cursor_y, ctx.content_width(), 0.0)
+                Rect::new(ctx.content_x(), ctx.cursor_y, ctx.content_width(), 0.0)
             } else {
-                layout_children(ctx, children, style_index, Some(text_style))
+                layout_container_children(ctx, children, style_index, text_style, containing_block)
             }
         }
         ElementKind::Heading { .. } => ctx.place_block(text_style.line_height),
@@ -101,9 +171,16 @@ fn layout_node(
             summary: _,
             summary_checkbox: _,
             children,
-        } => layout_details(node.open, children, ctx, style_index, Some(text_style)),
+        } => layout_details(
+            node.open,
+            children,
+            ctx,
+            style_index,
+            Some(text_style),
+            containing_block,
+        ),
         ElementKind::Div { children } | ElementKind::Form { children } => {
-            layout_children(ctx, children, style_index, Some(text_style))
+            layout_container_children(ctx, children, style_index, text_style, containing_block)
         }
         ElementKind::Label { text: _, control } => {
             layout_label(control, ctx, style_index, text_style)
@@ -160,6 +237,7 @@ fn layout_node(
             ctx,
             style_index,
             Some(text_style),
+            containing_block,
         ),
         ElementKind::Image { width, height, .. } => {
             let intrinsic_width = width.max(1.0);
@@ -181,7 +259,7 @@ fn layout_node(
             if *floating {
                 layout_floating_dialog(children, ctx, style_index, Some(text_style))
             } else {
-                layout_children(ctx, children, style_index, Some(text_style))
+                layout_container_children(ctx, children, style_index, text_style, containing_block)
             }
         }
         ElementKind::Progress { .. } => ctx.place_block(24.0),
@@ -196,7 +274,56 @@ fn layout_node(
                     as f32;
             ctx.place_block(lines * text_style.line_height)
         }
-    };
+    }
+}
+
+fn layout_container_children(
+    ctx: &mut LayoutContext,
+    children: &mut [HtmlNode],
+    style_index: &StyleIndex,
+    text_style: LayoutStyle,
+    containing_block: Rect,
+) -> Rect {
+    if text_style.position == Position::Relative {
+        return layout_relative_children(ctx, children, style_index, text_style);
+    }
+    layout_children(
+        ctx,
+        children,
+        style_index,
+        Some(text_style),
+        containing_block,
+    )
+}
+
+/// A relative box establishes the containing block used by its absolute
+/// descendants.  This is deliberately a fixed-pixel fixture primitive, not a
+/// claim of complete CSS box-model support.
+fn layout_relative_children(
+    ctx: &mut LayoutContext,
+    children: &mut [HtmlNode],
+    style_index: &StyleIndex,
+    text_style: LayoutStyle,
+) -> Rect {
+    let x = ctx.content_x();
+    let y = ctx.cursor_y;
+    let width = text_style.width_px.unwrap_or(ctx.content_width()).max(0.0);
+    let requested_height = text_style.height_px.map(|height| height.max(0.0));
+    let provisional = Rect::new(x, y, width, requested_height.unwrap_or(0.0));
+    let mut child_ctx = LayoutContext::for_box(provisional);
+    for child in children.iter_mut() {
+        layout_node(
+            child,
+            &mut child_ctx,
+            style_index,
+            Some(text_style),
+            provisional,
+        );
+    }
+    let content_height = (child_ctx.cursor_y - y).max(0.0);
+    let height = requested_height.unwrap_or(content_height);
+    ctx.cursor_y = y + height + BLOCK_GAP;
+    Rect::new(x, y, width, height)
 }
 
 fn layout_label(
@@ -207,17 +334,18 @@ fn layout_label(
 ) -> Rect {
     let row_y = ctx.cursor_y;
     let row_h = CONTROL_H.max(text_style.line_height);
-    let control_x = PAGE_PAD + 120.0;
+    let control_x = ctx.content_x() + 120.0;
+    let max_w = (ctx.content_width() - 120.0).max(80.0);
     layout_control_in_row(
         control,
         control_x,
         row_y,
         row_h,
-        ctx.content_width(),
+        max_w,
         style_index,
         text_style,
     );
-    let rect = Rect::new(PAGE_PAD, row_y, ctx.content_width(), row_h);
+    let rect = Rect::new(ctx.content_x(), row_y, ctx.content_width(), row_h);
     ctx.cursor_y = row_y + row_h + BLOCK_GAP;
     rect
 }
@@ -227,12 +355,11 @@ fn layout_control_in_row(
     x: f32,
     y: f32,
     row_h: f32,
-    content_width: f32,
+    max_w: f32,
     style_index: &StyleIndex,
     inherited: LayoutStyle,
 ) {
     let text_style = LayoutStyle::for_node(style_index, node, Some(inherited));
-    let max_w = (content_width - (x - PAGE_PAD)).max(80.0);
     match &mut node.kind {
         ElementKind::Input { input_type, .. } => match input_type {
             InputType::Checkbox | InputType::Radio => {
@@ -274,12 +401,17 @@ fn layout_floating_dialog(
     let h = 180.0;
     let rect = Rect::new(x, y, w, h);
 
-    let mut child_ctx = LayoutContext {
-        page_width: w - 16.0 + PAGE_PAD * 2.0,
-        cursor_y: y + 28.0,
-    };
+    let mut child_ctx =
+        LayoutContext::for_box(Rect::new(PAGE_PAD, y + 28.0, (w - 16.0).max(0.0), 0.0));
+    let local_containing_block = Rect::new(PAGE_PAD, y + 28.0, (w - 16.0).max(0.0), 0.0);
     for child in children.iter_mut() {
-        layout_node(child, &mut child_ctx, style_index, inherited);
+        layout_node(
+            child,
+            &mut child_ctx,
+            style_index,
+            inherited,
+            local_containing_block,
+        );
         shift_bounds_tree(child, x + 8.0 - PAGE_PAD, 0.0);
     }
 
@@ -294,6 +426,7 @@ fn layout_iframe(
     ctx: &mut LayoutContext,
     style_index: &StyleIndex,
     inherited: Option<LayoutStyle>,
+    _containing_block: Rect,
 ) -> Rect {
     let width = requested_width.max(1.0).min(ctx.content_width());
     let height = requested_height.max(1.0);
@@ -302,8 +435,15 @@ fn layout_iframe(
     let viewport = iframe_viewport(frame);
 
     let mut child_ctx = LayoutContext::new(viewport.width + PAGE_PAD * 2.0);
+    let local_containing_block = Rect::new(PAGE_PAD, PAGE_PAD, viewport.width, 0.0);
     for child in children.iter_mut() {
-        layout_node(child, &mut child_ctx, style_index, inherited);
+        layout_node(
+            child,
+            &mut child_ctx,
+            style_index,
+            inherited,
+            local_containing_block,
+        );
         shift_bounds_tree(child, viewport.x - PAGE_PAD, viewport.y - PAGE_PAD);
     }
     frame
@@ -334,8 +474,9 @@ fn layout_details(
     ctx: &mut LayoutContext,
     style_index: &StyleIndex,
     inherited: Option<LayoutStyle>,
+    containing_block: Rect,
 ) -> Rect {
-    let x = PAGE_PAD;
+    let x = ctx.content_x();
     let y = ctx.cursor_y;
     let w = ctx.content_width();
     let mut height = CONTROL_H;
@@ -344,9 +485,17 @@ fn layout_details(
         let mut child_ctx = LayoutContext {
             page_width: ctx.page_width,
             cursor_y: y + CONTROL_H,
+            content_x: ctx.content_x(),
+            content_width: ctx.content_width(),
         };
         for child in children.iter_mut() {
-            layout_node(child, &mut child_ctx, style_index, inherited);
+            layout_node(
+                child,
+                &mut child_ctx,
+                style_index,
+                inherited,
+                containing_block,
+            );
         }
         height = child_ctx.cursor_y - y;
         ctx.cursor_y = child_ctx.cursor_y + BLOCK_GAP;
@@ -362,13 +511,14 @@ fn layout_children(
     children: &mut [HtmlNode],
     style_index: &StyleIndex,
     inherited: Option<LayoutStyle>,
+    containing_block: Rect,
 ) -> Rect {
     let start_y = ctx.cursor_y;
     for child in children.iter_mut() {
-        layout_node(child, ctx, style_index, inherited);
+        layout_node(child, ctx, style_index, inherited, containing_block);
     }
     Rect::new(
-        PAGE_PAD,
+        ctx.content_x(),
         start_y,
         ctx.content_width(),
         ctx.cursor_y - start_y,
@@ -387,7 +537,34 @@ pub fn hit_test_details_summary(node: &HtmlNode, x: f32, y: f32) -> bool {
 mod tests {
     use super::layout_document;
     use crate::gpu_ui::geometry::iframe_viewport;
-    use crate::gpu_ui::html::node::{ElementKind, HtmlNode};
+    use crate::gpu_ui::html::{
+        Document,
+        node::{ElementKind, HtmlNode},
+    };
+
+    fn find_by_id<'a>(nodes: &'a [HtmlNode], id: &str) -> Option<&'a HtmlNode> {
+        for node in nodes {
+            if node.id_attr.as_deref() == Some(id) {
+                return Some(node);
+            }
+            let found = match &node.kind {
+                ElementKind::Element { children, .. }
+                | ElementKind::Details { children, .. }
+                | ElementKind::Div { children }
+                | ElementKind::Form { children }
+                | ElementKind::Iframe { children, .. }
+                | ElementKind::Dialog { children, .. } => find_by_id(children, id),
+                ElementKind::Label { control, .. } => {
+                    find_by_id(core::slice::from_ref(control.as_ref()), id)
+                }
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
 
     #[test]
     fn iframe_establishes_a_fixed_containing_viewport() {
@@ -425,5 +602,32 @@ mod tests {
         assert!(dialog.y >= viewport.y);
         assert!(dialog.right() <= viewport.right());
         assert!(dialog.bottom() <= viewport.bottom());
+    }
+
+    #[test]
+    fn absolute_pixel_boxes_use_the_relative_fixture_board() {
+        let source = r#"
+            <style>
+              #board { position: relative; width: 300px; height: 160px; }
+              #card { position: absolute; left: 30px; top: 40px; width: 120px; height: 50px; }
+              #label { position: absolute; left: 7px; top: 11px; width: 100px; font-size: 18px; }
+            </style>
+            <main id="board"><div id="card"><span id="label">pixel box</span></div></main>
+        "#;
+        let mut engine = rust_qjs_dom::DomEngine::new().expect("DOM engine starts");
+        let artifact = engine
+            .parse(source, "https://solara.test/absolute-fixture")
+            .expect("style index is generated");
+        let document = Document::from_dom(artifact, engine, 960.0).expect("fixture adapts");
+
+        let board = find_by_id(&document.nodes, "board").expect("relative board");
+        let card = find_by_id(&document.nodes, "card").expect("absolute card");
+        let label = find_by_id(&document.nodes, "label").expect("absolute label");
+        assert_eq!((board.bounds.x, board.bounds.y), (16.0, 16.0));
+        assert_eq!((board.bounds.width, board.bounds.height), (300.0, 160.0));
+        assert_eq!((card.bounds.x, card.bounds.y), (46.0, 56.0));
+        assert_eq!((card.bounds.width, card.bounds.height), (120.0, 50.0));
+        assert_eq!((label.bounds.x, label.bounds.y), (53.0, 67.0));
+        assert_eq!(label.bounds.width, 100.0);
     }
 }

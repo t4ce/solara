@@ -24,6 +24,8 @@ include = [
     "crates/solara-wgpu-shim/**",
     "docs/demoui.html",
     "docs/demoui.css",
+    "docs/TextAndBorders.html",
+    "docs/TextAndBorders.css",
     "docs/video_demo.html",
     "docs/engine-handoff.md",
     "docs/headless-picasso-map.md",

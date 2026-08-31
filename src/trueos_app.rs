@@ -1164,7 +1164,7 @@ fn parse_surf_launch(script: &str) -> Result<SurfLaunch, Error> {
 fn default_render_document() -> RenderDocument {
     RenderDocument {
         source: None,
-        source_url: String::from("trueos://solara/docs/demoui.html"),
+        source_url: String::from(crate::gpu_ui::TEXT_AND_BORDERS_DOCUMENT_URL),
         handoff_path: None,
     }
 }

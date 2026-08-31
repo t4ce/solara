@@ -187,6 +187,10 @@
       ],
       "properties": {
         "authoredProperties": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "cascadedDeclarations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
         "display": { "type": ["string", "null"] },
         "color": { "type": ["string", "null"] },
         "backgroundColor": { "type": ["string", "null"] },

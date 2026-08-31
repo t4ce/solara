@@ -189,6 +189,61 @@ mod tests {
     }
 
     #[test]
+    fn loads_text_and_borders_fixture_and_its_relative_stylesheet() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/TextAndBorders.html");
+        let page = load_page(Some(fixture)).expect("text-and-borders fixture loads");
+        assert_eq!(page.title, "Solara Text and Borders");
+        assert_eq!(page.artifact.style_index.external_stylesheet_count, 1);
+        assert!(page.artifact.style_index.load_errors.is_empty());
+
+        for index in 1..=27 {
+            let id = format!("sample-{index:02}");
+            assert!(
+                page.artifact.document.find_element_by_id(&id).is_some(),
+                "fixture is missing {id}"
+            );
+        }
+
+        let image_sample = page
+            .artifact
+            .document
+            .find_element_by_id("sample-17")
+            .expect("border-image sample");
+        let image_style = page
+            .artifact
+            .style_index
+            .style(image_sample.style_ref.expect("style ref"))
+            .expect("computed style");
+        assert_eq!(
+            image_style.cascaded_declarations.get("position"),
+            Some(&String::from("absolute"))
+        );
+        assert!(
+            image_style
+                .cascaded_declarations
+                .contains_key("border-image"),
+            "unmodeled border data remains in the DOM artifact"
+        );
+
+        let last_sample = page
+            .artifact
+            .document
+            .find_element_by_id("sample-27")
+            .expect("last sample");
+        let last_style = page
+            .artifact
+            .style_index
+            .style(last_sample.style_ref.expect("style ref"))
+            .expect("computed style");
+        assert_eq!(last_style.font_size_px, Some(36.0));
+        assert!(
+            last_style
+                .cascaded_declarations
+                .contains_key("border-end-end-radius")
+        );
+    }
+
+    #[test]
     fn loads_http_html_and_relative_stylesheet() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();

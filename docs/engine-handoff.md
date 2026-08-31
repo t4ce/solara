@@ -17,6 +17,20 @@ HTML bytes
 
 `LoadedPage` creates one `DomEngine` with a browser-owned linked-stylesheet callback. Parse5 runs once; Lightning CSS then computes the artifact style table. `Document` owns both the artifact and that same engine. The renderer adapter in `src/gpu_ui/html/parser.rs` copies per-node style references, and paint consumes authored properties from `styleIndex` without reparsing CSS.
 
+Each style entry now also retains `cascadedDeclarations`: an open map of every
+normalized winning declaration seen by the existing cascade. This includes
+properties such as `border-top`, `border-style`, `border-radius`,
+`border-image`, logical borders, `outline`, and custom properties even though
+the current painter does not use them. It is additive DOM data only: selector
+matching, stylesheet scope, and cascade precedence remain exactly as they were.
+
+`docs/TextAndBorders.html` is the default desktop and no-handoff TRUEOS visual
+fixture. Its adjacent `TextAndBorders.css` exercises 27 font-size and border
+cases. The current layout adapter supports its intentionally small
+`position: relative` / `position: absolute` pixel-coordinate subset; the rest
+of each winning declaration stays in the open DOM map for the future
+Picasso-facing border and box-model compiler.
+
 RustQJSDom also enumerates HTML, CSS `url(...)`, image, `srcset`, media,
 iframe, script, preload, and favicon requests. Except for linked stylesheets,
 Solara preserves this index as metadata only: it is not yet connected to a

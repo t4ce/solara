@@ -73,6 +73,9 @@ export function createComputedStyle(tagName = '', path = '', parentStyle = null)
     borderWidthPx: 0,
     borderColor: 'transparent',
     authoredProperties: [],
+    // Keep renderer-unmodeled winning declarations in the artifact. This is
+    // data only; it does not turn the DOM/CSS boundary into a paint API.
+    cascadedDeclarations: Object.create(null),
     source: {
       matchedRules: [],
       inline: false,

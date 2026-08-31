@@ -24,13 +24,19 @@ package include-list does not ship `vendor/`.
 1. Solara instantiates one `DomEngine` and supplies its linked-stylesheet loader.
 2. Parse5 builds the canonical DOM, then Lightning CSS computes `styleIndex`.
 3. `assetIndex` records resource requests without fetching or decoding them.
-4. Solara adapts `DomArtifact.document` into its existing layout nodes and uses
-   authored computed styles during paint.
+4. Each `styleIndex` entry carries both the current typed paint subset and an
+   open `cascadedDeclarations` map containing every normalized winner observed
+   by the existing cascade. Solara may retain that map for a later renderer
+   without teaching RustQJSDom about renderer primitives.
 5. Solara retains the same `DomEngine`/`JsEngine` for future page bindings.
 
 The integration consumes the normalized document, never the old TrueSurfer
 render tree. RustQJSDom owns CSS parsing/cascade; Solara owns URL resolution,
 resource policy, layout, paint, WGPU, window state, and input.
+
+`cascadedDeclarations` is deliberately additive artifact data, not a second
+cascade. It follows the current selector, stylesheet, and inline-style scope;
+it does not claim to add selector syntax, at-rules, or CSSOM behavior.
 
 ## Suggested adapter boundary
 
