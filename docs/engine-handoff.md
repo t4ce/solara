@@ -101,9 +101,25 @@ media methods, audio, or TRUEOS hardware decode.
 The previous Solara `CssEngine`, Stylo dependencies, and duplicate stylesheet
 collector have been removed. RustQJSDom/Lightning CSS is the sole CSS path.
 
-Parsing does not execute page `<script>` elements. The retained `JsEngine` now
-owns Solara's first browser host binding: mouse input. Page-script execution can
-use that same context without creating a second JavaScript runtime.
+Parsing does not execute page `<script>` elements. The retained DOM `JsEngine`
+owns Solara's first browser host binding: mouse input. The first page-script
+step intentionally uses a second, isolated QuickJS context so an untrusted
+script cannot replace the parser/cascade runtime's private globals.
+
+The first execution step is deliberately opt-in and narrower than a browser
+DOM binding.  When the Blueprint is built with `sandboxed-scene-js`, a document
+whose `<html>` element has `data-solara-feature-step="sandboxed-scene-js"` may
+run bounded inline classic scripts after Parse5 and the Lightning CSS cascade
+have completed.  Only a missing `type`, `text/javascript`,
+`application/javascript`, or `text/ecmascript` is eligible; module and data
+scripts remain inert.  The only new capability is `__solara.scenePatch(...)`, which
+validates one of two small render-projection updates before Solara relayouts
+and publishes one coherent retained scene.  External scripts, DOM APIs, fetch,
+filesystem access, UI4 leases, and GPU handles remain unavailable through this
+step.  A script failure discards its whole staged patch batch and keeps the
+previous static CSS projection.  See
+[`headless-picasso-map.md`](headless-picasso-map.md) for the limits and the
+native Picasso migration map.
 
 ## Mouse input boundary
 

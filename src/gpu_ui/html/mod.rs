@@ -9,7 +9,13 @@ pub use node::HtmlNode;
 use layout::{document_height, hit_test_details_summary, layout_document};
 use paint::paint_document;
 use parser::parse_html;
+#[cfg(feature = "sandboxed-scene-js")]
+use rust_qjs_dom::JsEngineOptions;
 use rust_qjs_dom::{DomArtifact, DomEngine, JsEngine};
+#[cfg(feature = "sandboxed-scene-js")]
+use serde_json::Value;
+#[cfg(feature = "sandboxed-scene-js")]
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use crate::gpu_ui::input::{self, MouseDispatch, MouseInput};
 
@@ -30,27 +36,53 @@ pub struct Document {
     pub nodes: Vec<HtmlNode>,
     pub scroll_y: f32,
     pub content_height: f32,
-    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
     scrollbar_side: ScrollbarSide,
-    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
     resize_handle: bool,
     dom: DomArtifact,
     dom_engine: DomEngine,
     page_width: f32,
+    #[cfg(feature = "sandboxed-scene-js")]
+    scene_patch_sink: Rc<RefCell<ScenePatchSink>>,
+    #[cfg(feature = "sandboxed-scene-js")]
+    scene_script_engine: JsEngine,
+    #[cfg(feature = "sandboxed-scene-js")]
+    scene_patch_host_installed: bool,
 }
 
 /// Load-time page policy for Solara's Rust-owned viewport scrollbar.
 ///
 /// The document selects a side; browser chrome owns its geometry and paint.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 pub(crate) enum ScrollbarSide {
     Left,
     #[default]
     Right,
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 impl ScrollbarSide {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     pub(crate) const fn as_str(self) -> &'static str {
@@ -66,11 +98,115 @@ pub(crate) struct SelectInteraction {
 }
 
 #[derive(Clone, Debug)]
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[cfg_attr(
+    all(
+        feature = "headless-picasso",
+        not(any(test, target_os = "trueos", target_os = "zkvm"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) struct ImageRequest {
     pub(crate) node_id: u32,
     pub(crate) source_url: String,
     pub(crate) rect: crate::gpu_ui::geometry::Rect,
+}
+
+/// Explicit limits for the opt-in first JavaScript execution step.
+///
+/// This is deliberately not a browser DOM API.  The only host capability is
+/// `__solara.scenePatch(...)`, whose accepted messages are validated before
+/// Solara mutates its render projection and publishes a new scene.
+#[cfg(feature = "sandboxed-scene-js")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SceneScriptBudget {
+    pub(crate) max_scripts: usize,
+    pub(crate) max_source_bytes: usize,
+    pub(crate) max_patches: usize,
+    pub(crate) max_text_bytes: usize,
+    pub(crate) timeout: Duration,
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+const SCENE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+#[cfg(feature = "sandboxed-scene-js")]
+const SCENE_SCRIPT_STACK_LIMIT_BYTES: usize = 512 * 1024;
+
+#[cfg(feature = "sandboxed-scene-js")]
+impl Default for SceneScriptBudget {
+    fn default() -> Self {
+        Self {
+            max_scripts: 4,
+            max_source_bytes: 16 * 1024,
+            max_patches: 32,
+            max_text_bytes: 4 * 1024,
+            timeout: Duration::from_millis(16),
+        }
+    }
+}
+
+/// Result of one explicit sandboxed-script feature step.
+#[cfg(feature = "sandboxed-scene-js")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SceneScriptReport {
+    pub(crate) scripts: usize,
+    pub(crate) patches: usize,
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ScenePatch {
+    SetPrimaryHeading { text: String },
+    SetFirstPlainText { text: String },
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+impl ScenePatch {
+    fn decode(arguments: &[Value], max_text_bytes: usize) -> Result<Self, String> {
+        let [message] = arguments else {
+            return Err(String::from(
+                "__solara.scenePatch expects exactly one JSON object",
+            ));
+        };
+        let object = message
+            .as_object()
+            .ok_or_else(|| String::from("scene patch must be an object"))?;
+        if object.len() != 2 || !object.contains_key("op") || !object.contains_key("text") {
+            return Err(String::from(
+                "scene patch must contain only string op and text fields",
+            ));
+        }
+        let text = object
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| String::from("scene patch text must be a string"))?;
+        if text.len() > max_text_bytes || text.contains('\0') {
+            return Err(String::from("scene patch text exceeds its bounded policy"));
+        }
+        match object.get("op").and_then(Value::as_str) {
+            Some("set-primary-heading") => Ok(Self::SetPrimaryHeading {
+                text: String::from(text),
+            }),
+            Some("set-first-plain-text") => Ok(Self::SetFirstPlainText {
+                text: String::from(text),
+            }),
+            _ => Err(String::from("scene patch operation is not enabled")),
+        }
+    }
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+#[derive(Default)]
+struct ScenePatchSink {
+    active: bool,
+    max_patches: usize,
+    max_text_bytes: usize,
+    patches: Vec<ScenePatch>,
 }
 
 impl Document {
@@ -79,24 +215,58 @@ impl Document {
         mut dom_engine: DomEngine,
         page_width: f32,
     ) -> Result<Self, String> {
-        #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+        #[cfg(any(
+            test,
+            target_os = "trueos",
+            target_os = "zkvm",
+            feature = "headless-picasso"
+        ))]
         let scrollbar_side = scrollbar_side_from_dom(&dom);
-        #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+        #[cfg(any(
+            test,
+            target_os = "trueos",
+            target_os = "zkvm",
+            feature = "headless-picasso"
+        ))]
         let resize_handle = resize_handle_from_dom(&dom);
         let mut nodes = parse_html(&dom, &mut dom_engine)?;
         layout_document(&mut nodes, page_width, &dom.style_index);
         let content_height = document_height(&nodes);
+        #[cfg(feature = "sandboxed-scene-js")]
+        let scene_patch_sink = Rc::new(RefCell::new(ScenePatchSink::default()));
+        #[cfg(feature = "sandboxed-scene-js")]
+        let scene_script_engine = JsEngine::with_options(JsEngineOptions {
+            memory_limit_bytes: SCENE_SCRIPT_MEMORY_LIMIT_BYTES,
+            stack_limit_bytes: SCENE_SCRIPT_STACK_LIMIT_BYTES,
+        })
+        .map_err(|error| format!("failed to start Solara's isolated script runtime: {error}"))?;
         let mut document = Self {
             nodes,
             scroll_y: 0.0,
             content_height,
-            #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+            #[cfg(any(
+                test,
+                target_os = "trueos",
+                target_os = "zkvm",
+                feature = "headless-picasso"
+            ))]
             scrollbar_side,
-            #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+            #[cfg(any(
+                test,
+                target_os = "trueos",
+                target_os = "zkvm",
+                feature = "headless-picasso"
+            ))]
             resize_handle,
             dom,
             dom_engine,
             page_width,
+            #[cfg(feature = "sandboxed-scene-js")]
+            scene_patch_sink,
+            #[cfg(feature = "sandboxed-scene-js")]
+            scene_script_engine,
+            #[cfg(feature = "sandboxed-scene-js")]
+            scene_patch_host_installed: false,
         };
         let bootstrap = format!(
             "globalThis.__solara = Object.freeze({{ domArtifactVersion: {} }});",
@@ -106,6 +276,20 @@ impl Document {
             .js_mut()
             .eval_void(&bootstrap, "<solara-bootstrap>")
             .map_err(|error| format!("failed to initialize Solara's JavaScript host: {error}"))?;
+        #[cfg(feature = "sandboxed-scene-js")]
+        {
+            document.install_scene_patch_host()?;
+            let script_bootstrap = format!(
+                "globalThis.__solara = Object.freeze({{ domArtifactVersion: {}, scenePatch: globalThis.__solaraScenePatch }});",
+                document.dom().schema_version
+            );
+            document
+                .scene_script_engine
+                .eval_void(&script_bootstrap, "<solara-scene-script-bootstrap>")
+                .map_err(|error| {
+                    format!("failed to initialize Solara's isolated script host: {error}")
+                })?;
+        }
         input::install(document.js_mut())?;
         Ok(document)
     }
@@ -114,17 +298,32 @@ impl Document {
         &self.dom
     }
 
-    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
     pub(crate) const fn scrollbar_side(&self) -> ScrollbarSide {
         self.scrollbar_side
     }
 
-    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
     pub(crate) const fn resize_handle_enabled(&self) -> bool {
         self.resize_handle
     }
 
-    #[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
     pub(crate) fn image_requests(&self) -> Vec<ImageRequest> {
         let mut requests = Vec::new();
         collect_image_requests(&self.nodes, &mut requests);
@@ -151,11 +350,186 @@ impl Document {
         self.dom_engine.js_mut()
     }
 
+    #[cfg(feature = "sandboxed-scene-js")]
+    fn install_scene_patch_host(&mut self) -> Result<(), String> {
+        if self.scene_patch_host_installed {
+            return Ok(());
+        }
+        let sink = Rc::clone(&self.scene_patch_sink);
+        self.scene_script_engine
+            .register_json_function("__solaraScenePatch", 1, move |arguments| {
+                let mut state = sink
+                    .try_borrow_mut()
+                    .map_err(|_| String::from("Solara scene patch sink is unavailable"))?;
+                if !state.active {
+                    return Err(String::from(
+                        "Solara scene patch capability is inactive outside an execution step",
+                    ));
+                }
+                if state.patches.len() >= state.max_patches {
+                    return Err(String::from("Solara scene patch budget is exhausted"));
+                }
+                let patch = ScenePatch::decode(arguments, state.max_text_bytes)?;
+                state.patches.push(patch);
+                Ok(Value::Null)
+            })
+            .map_err(|error| format!("failed to install Solara scene-patch host: {error}"))?;
+        self.scene_patch_host_installed = true;
+        Ok(())
+    }
+
+    /// Execute the document's explicitly opted-in, inline classic scripts.
+    ///
+    /// A document must place `data-solara-feature-step="sandboxed-scene-js"`
+    /// on its `<html>` element. External scripts and every other browser API
+    /// remain unavailable in this first step.
+    #[cfg(feature = "sandboxed-scene-js")]
+    pub(crate) fn execute_opt_in_inline_scene_scripts(
+        &mut self,
+        budget: SceneScriptBudget,
+    ) -> Result<SceneScriptReport, String> {
+        if !document_requests_sandboxed_scene_js(&self.dom) {
+            return Ok(SceneScriptReport::default());
+        }
+        let scripts = self
+            .dom
+            .extracted
+            .scripts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, metadata)| {
+                let source = metadata.get("scriptText")?.as_str()?;
+                if !is_inline_classic_script(metadata) {
+                    return None;
+                }
+                Some((
+                    source.to_owned(),
+                    format!("{}#inline-script-{}", self.dom.source.url, index + 1),
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.execute_scene_script_batch(scripts.as_slice(), budget)
+    }
+
+    /// Execute one explicitly supplied script against Solara's bounded
+    /// scene-patch capability.  This is useful for deterministic tests and
+    /// for future trusted host-driven feature steps; it does not implement a
+    /// fake live `document` object.
+    #[cfg(feature = "sandboxed-scene-js")]
+    #[allow(dead_code)]
+    pub(crate) fn execute_scene_script(
+        &mut self,
+        source: &str,
+        filename: &str,
+        budget: SceneScriptBudget,
+    ) -> Result<SceneScriptReport, String> {
+        let scripts = vec![(String::from(source), String::from(filename))];
+        self.execute_scene_script_batch(scripts.as_slice(), budget)
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    fn execute_scene_script_batch(
+        &mut self,
+        scripts: &[(String, String)],
+        budget: SceneScriptBudget,
+    ) -> Result<SceneScriptReport, String> {
+        if scripts.len() > budget.max_scripts {
+            return Err(format!(
+                "Solara sandbox accepts at most {} inline scripts per feature step",
+                budget.max_scripts
+            ));
+        }
+        if let Some((index, _)) = scripts
+            .iter()
+            .enumerate()
+            .find(|(_, (source, _))| source.len() > budget.max_source_bytes)
+        {
+            return Err(format!(
+                "Solara inline script {} exceeds its {} byte budget",
+                index + 1,
+                budget.max_source_bytes
+            ));
+        }
+
+        self.install_scene_patch_host()?;
+        {
+            let mut state = self
+                .scene_patch_sink
+                .try_borrow_mut()
+                .map_err(|_| String::from("Solara scene patch sink is already active"))?;
+            if state.active {
+                return Err(String::from(
+                    "Solara scene patch execution is already active",
+                ));
+            }
+            state.patches.clear();
+            state.max_patches = budget.max_patches;
+            state.max_text_bytes = budget.max_text_bytes;
+            state.active = true;
+        }
+
+        let evaluation = scripts.iter().try_for_each(|(source, filename)| {
+            self.scene_script_engine
+                .eval_void_with_timeout(source, filename, budget.timeout)
+                .map_err(|error| format!("sandboxed Solara script {filename} failed: {error}"))
+        });
+        let patches = {
+            let mut state = self
+                .scene_patch_sink
+                .try_borrow_mut()
+                .map_err(|_| String::from("Solara scene patch sink was not released"))?;
+            state.active = false;
+            core::mem::take(&mut state.patches)
+        };
+        evaluation?;
+        self.apply_scene_patches(patches.as_slice())?;
+        Ok(SceneScriptReport {
+            scripts: scripts.len(),
+            patches: patches.len(),
+        })
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    fn apply_scene_patches(&mut self, patches: &[ScenePatch]) -> Result<(), String> {
+        for patch in patches {
+            let present = match patch {
+                ScenePatch::SetPrimaryHeading { .. } => has_first_heading(&self.nodes),
+                ScenePatch::SetFirstPlainText { .. } => has_first_plain_text(&self.nodes),
+            };
+            if !present {
+                return Err(String::from(
+                    "sandboxed script addressed a render target absent from this document",
+                ));
+            }
+        }
+        for patch in patches {
+            let applied = match patch {
+                ScenePatch::SetPrimaryHeading { text } => {
+                    set_first_heading_text(&mut self.nodes, text)
+                }
+                ScenePatch::SetFirstPlainText { text } => {
+                    set_first_plain_text(&mut self.nodes, text)
+                }
+            };
+            debug_assert!(applied, "the validated scene target remains present");
+        }
+        if !patches.is_empty() {
+            self.relayout(self.page_width);
+        }
+        Ok(())
+    }
+
     pub(crate) fn dispatch_mouse(&mut self, input: MouseInput) -> Result<MouseDispatch, String> {
         input::dispatch(self.js_mut(), input)
     }
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    #[cfg(any(
+        test,
+        target_os = "trueos",
+        target_os = "zkvm",
+        feature = "headless-picasso"
+    ))]
+    #[allow(dead_code)]
     pub(crate) fn set_visual_viewport(
         &mut self,
         x: u32,
@@ -231,7 +605,12 @@ impl Document {
     }
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn collect_image_requests(nodes: &[HtmlNode], out: &mut Vec<ImageRequest>) {
     for node in nodes {
         match &node.kind {
@@ -254,7 +633,12 @@ fn collect_image_requests(nodes: &[HtmlNode], out: &mut Vec<ImageRequest>) {
     }
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn scrollbar_side_from_dom(dom: &DomArtifact) -> ScrollbarSide {
     let Some(html) = find_element(&dom.document, "html") else {
         return ScrollbarSide::default();
@@ -265,7 +649,12 @@ fn scrollbar_side_from_dom(dom: &DomArtifact) -> ScrollbarSide {
         .unwrap_or_default()
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn scrollbar_side_attribute(node: &rust_qjs_dom::DomNode) -> Option<ScrollbarSide> {
     node.attribute("data-solara-scrollbar")
         .and_then(parse_scrollbar_side)
@@ -275,7 +664,12 @@ fn scrollbar_side_attribute(node: &rust_qjs_dom::DomNode) -> Option<ScrollbarSid
         })
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn parse_scrollbar_side(value: &str) -> Option<ScrollbarSide> {
     if value.trim().eq_ignore_ascii_case("left") {
         Some(ScrollbarSide::Left)
@@ -286,7 +680,12 @@ fn parse_scrollbar_side(value: &str) -> Option<ScrollbarSide> {
     }
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn resize_handle_from_dom(dom: &DomArtifact) -> bool {
     let Some(html) = find_element(&dom.document, "html") else {
         return false;
@@ -297,7 +696,12 @@ fn resize_handle_from_dom(dom: &DomArtifact) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn resize_handle_attribute(node: &rust_qjs_dom::DomNode) -> Option<bool> {
     let value = node.attribute("data-solara-resize-handle")?.trim();
     if value.eq_ignore_ascii_case("bottom-right")
@@ -315,7 +719,12 @@ fn resize_handle_attribute(node: &rust_qjs_dom::DomNode) -> Option<bool> {
     }
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 fn find_element<'a>(
     node: &'a rust_qjs_dom::DomNode,
     tag: &str,
@@ -335,6 +744,93 @@ fn find_element<'a>(
                 .as_deref()
                 .and_then(|content| find_element(content, tag))
         })
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+fn document_requests_sandboxed_scene_js(dom: &DomArtifact) -> bool {
+    find_element(&dom.document, "html")
+        .and_then(|html| html.attribute("data-solara-feature-step"))
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("sandboxed-scene-js"))
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+fn is_inline_classic_script(metadata: &Value) -> bool {
+    if metadata
+        .get("src")
+        .and_then(Value::as_str)
+        .is_some_and(|source| !source.is_empty())
+    {
+        return false;
+    }
+    let Some(tag) = metadata.get("tagHtml").and_then(Value::as_str) else {
+        return false;
+    };
+    let media_type = html_attribute(tag, "type")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        media_type.as_str(),
+        "" | "text/javascript" | "application/javascript" | "text/ecmascript"
+    )
+}
+
+/// Extract one HTML attribute from an already extracted opening tag.
+///
+/// This is intentionally only used to enforce a deny-by-default script policy;
+/// it is not a replacement for Parse5.
+#[cfg(feature = "sandboxed-scene-js")]
+fn html_attribute(tag: &str, name: &str) -> Option<String> {
+    let lowercase = tag.to_ascii_lowercase();
+    let mut cursor = 0usize;
+    while let Some(relative) = lowercase[cursor..].find(name) {
+        let start = cursor + relative;
+        let before_ok = start == 0
+            || lowercase.as_bytes()[start - 1].is_ascii_whitespace()
+            || lowercase.as_bytes()[start - 1] == b'<';
+        let after = start + name.len();
+        let after_ok = lowercase
+            .as_bytes()
+            .get(after)
+            .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'=');
+        if !before_ok || !after_ok {
+            cursor = after;
+            continue;
+        }
+        let mut value_start = after;
+        while lowercase
+            .as_bytes()
+            .get(value_start)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            value_start += 1;
+        }
+        if lowercase.as_bytes().get(value_start) != Some(&b'=') {
+            return Some(String::new());
+        }
+        value_start += 1;
+        while lowercase
+            .as_bytes()
+            .get(value_start)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            value_start += 1;
+        }
+        let quote = *tag.as_bytes().get(value_start)?;
+        if matches!(quote, b'\'' | b'"') {
+            value_start += 1;
+            let length = tag.as_bytes()[value_start..]
+                .iter()
+                .position(|byte| *byte == quote)?;
+            return Some(tag[value_start..value_start + length].to_owned());
+        }
+        let length = tag.as_bytes()[value_start..]
+            .iter()
+            .position(|byte| byte.is_ascii_whitespace() || *byte == b'>')
+            .unwrap_or(tag.len() - value_start);
+        return Some(tag[value_start..value_start + length].to_owned());
+    }
+    None
 }
 
 #[cfg_attr(feature = "gpu-text-only", allow(dead_code))]
@@ -394,6 +890,28 @@ fn set_first_heading_text(nodes: &mut [HtmlNode], text: &str) -> bool {
     false
 }
 
+#[cfg(feature = "sandboxed-scene-js")]
+fn has_first_heading(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|node| match &node.kind {
+        node::ElementKind::Heading { .. } => true,
+        node::ElementKind::Element { tag, children }
+            if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+        {
+            has_first_plain_text(children)
+        }
+        node::ElementKind::Element { children, .. }
+        | node::ElementKind::Details { children, .. }
+        | node::ElementKind::Div { children }
+        | node::ElementKind::Form { children }
+        | node::ElementKind::Iframe { children, .. }
+        | node::ElementKind::Dialog { children, .. } => has_first_heading(children),
+        node::ElementKind::Label { control, .. } => {
+            has_first_heading(core::slice::from_ref(control.as_ref()))
+        }
+        _ => false,
+    })
+}
+
 fn set_first_plain_text(nodes: &mut [HtmlNode], text: &str) -> bool {
     for node in nodes {
         let updated = match &mut node.kind {
@@ -417,6 +935,23 @@ fn set_first_plain_text(nodes: &mut [HtmlNode], text: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(feature = "sandboxed-scene-js")]
+fn has_first_plain_text(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|node| match &node.kind {
+        node::ElementKind::PlainText { .. } => true,
+        node::ElementKind::Element { children, .. }
+        | node::ElementKind::Details { children, .. }
+        | node::ElementKind::Div { children }
+        | node::ElementKind::Form { children }
+        | node::ElementKind::Iframe { children, .. }
+        | node::ElementKind::Dialog { children, .. } => has_first_plain_text(children),
+        node::ElementKind::Label { control, .. } => {
+            has_first_plain_text(core::slice::from_ref(control.as_ref()))
+        }
+        _ => false,
+    })
 }
 
 fn configure_select_node(
@@ -832,5 +1367,191 @@ mod parity_baseline {
             .collect::<Vec<_>>();
         assert!(wrapped.len() >= 2);
         assert!((wrapped[1].y - wrapped[0].y - 36.0).abs() < 0.001);
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    #[test]
+    fn opt_in_inline_script_recompiles_the_headless_scene_projection() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                r#"
+                    <html data-solara-feature-step="sandboxed-scene-js">
+                      <style>h1 { color: #123456; }</style>
+                      <body>
+                        <h1>before script</h1>
+                        <p>first paragraph</p>
+                        <script>
+                          __solara.scenePatch({
+                            op: "set-primary-heading",
+                            text: "after script"
+                          });
+                        </script>
+                      </body>
+                    </html>
+                "#,
+                "https://solara.test/script-step",
+            )
+            .expect("document parses");
+        let mut document = Document::from_dom(artifact, engine, 640.0).expect("document adapts");
+
+        let report = document
+            .execute_opt_in_inline_scene_scripts(super::SceneScriptBudget::default())
+            .expect("scene script succeeds");
+        assert_eq!((report.scripts, report.patches), (1, 1));
+
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        let heading = batch
+            .text
+            .sections
+            .iter()
+            .find(|section| section.text == "after script")
+            .expect("patched heading reaches the paint batch");
+        assert_eq!(
+            heading.color,
+            [
+                0x12 as f32 / 255.0,
+                0x34 as f32 / 255.0,
+                0x56 as f32 / 255.0,
+                1.0,
+            ]
+        );
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    #[test]
+    fn failed_script_batch_keeps_the_previous_coherent_projection() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                r#"
+                    <html data-solara-feature-step="sandboxed-scene-js">
+                      <body>
+                        <h1>before script</h1>
+                        <script>
+                          __solara.scenePatch({
+                            op: "set-primary-heading",
+                            text: "must not publish"
+                          });
+                        </script>
+                        <script>throw new Error("stop the feature step")</script>
+                      </body>
+                    </html>
+                "#,
+                "https://solara.test/script-rollback",
+            )
+            .expect("document parses");
+        let mut document = Document::from_dom(artifact, engine, 640.0).expect("document adapts");
+
+        let error = document
+            .execute_opt_in_inline_scene_scripts(super::SceneScriptBudget::default())
+            .expect_err("later script aborts the batch");
+        assert!(error.contains("stop the feature step"));
+
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        assert!(
+            batch
+                .text
+                .sections
+                .iter()
+                .any(|section| section.text == "before script")
+        );
+        assert!(
+            !batch
+                .text
+                .sections
+                .iter()
+                .any(|section| section.text == "must not publish")
+        );
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    #[test]
+    fn unmarked_document_keeps_inline_scripts_inert() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                "<h1>static</h1><script>globalThis.pageScriptRan = true</script>",
+                "https://solara.test/script-inert",
+            )
+            .expect("document parses");
+        let mut document = Document::from_dom(artifact, engine, 640.0).expect("document adapts");
+
+        let report = document
+            .execute_opt_in_inline_scene_scripts(super::SceneScriptBudget::default())
+            .expect("unmarked document needs no script run");
+        assert_eq!(report, super::SceneScriptReport::default());
+        assert_eq!(
+            document
+                .js_mut()
+                .eval_json("globalThis.pageScriptRan === true", "<script-proof>")
+                .expect("proof evaluates"),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            document
+                .js_mut()
+                .eval_json("typeof globalThis.__solara.scenePatch", "<isolation-proof>")
+                .expect("parser-runtime proof evaluates"),
+            serde_json::json!("undefined")
+        );
+    }
+
+    #[cfg(feature = "sandboxed-scene-js")]
+    #[test]
+    fn only_inline_classic_scripts_are_eligible_for_the_feature_step() {
+        let mut engine = DomEngine::new().expect("engine starts");
+        let artifact = engine
+            .parse(
+                r#"
+                    <html data-solara-feature-step="sandboxed-scene-js">
+                      <body>
+                        <h1>static heading</h1>
+                        <script type="module">
+                          __solara.scenePatch({ op: "set-primary-heading", text: "module" });
+                        </script>
+                        <script type="application/ld+json">
+                          { "op": "set-primary-heading", "text": "data" }
+                        </script>
+                        <script src="/external.js">
+                          __solara.scenePatch({ op: "set-primary-heading", text: "external" });
+                        </script>
+                        <script>
+                          __solara.scenePatch({ op: "set-primary-heading", text: "classic" });
+                        </script>
+                      </body>
+                    </html>
+                "#,
+                "https://solara.test/script-types",
+            )
+            .expect("document parses");
+        let mut document = Document::from_dom(artifact, engine, 640.0).expect("document adapts");
+
+        let report = document
+            .execute_opt_in_inline_scene_scripts(super::SceneScriptBudget::default())
+            .expect("classic script succeeds");
+        assert_eq!((report.scripts, report.patches), (1, 1));
+
+        let mut batch = RenderBatch::default();
+        collect_batch(&document, 1.0, &mut batch);
+        assert!(
+            batch
+                .text
+                .sections
+                .iter()
+                .any(|section| section.text == "classic")
+        );
+        for rejected in ["static heading", "module", "data", "external"] {
+            assert!(
+                !batch
+                    .text
+                    .sections
+                    .iter()
+                    .any(|section| section.text == rejected),
+                "rejected script type unexpectedly changed the projection: {rejected}"
+            );
+        }
     }
 }

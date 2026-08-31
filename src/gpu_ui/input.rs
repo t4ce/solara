@@ -124,7 +124,12 @@ pub(crate) fn install(js: &mut JsEngine) -> Result<(), String> {
         .map_err(|error| format!("failed to initialize Solara mouse events: {error}"))
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
 pub(crate) fn set_viewport(
     js: &mut JsEngine,
     x: u32,

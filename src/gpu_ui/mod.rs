@@ -11,7 +11,19 @@ pub(crate) mod input;
 mod loader;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod media_store;
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[cfg_attr(
+    all(
+        feature = "headless-picasso",
+        not(any(test, target_os = "trueos", target_os = "zkvm"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) mod picasso;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod renderer;
@@ -25,11 +37,23 @@ pub(crate) mod youtube;
 mod youtube_media;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) use text::char_width as ui4_char_width;
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
 pub(crate) use html::ImageRequest;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub(crate) use text::char_width as ui4_char_width;
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[cfg_attr(
+    all(
+        feature = "headless-picasso",
+        not(any(test, target_os = "trueos", target_os = "zkvm"))
+    ),
+    allow(dead_code)
+)]
 fn clamped_vertical_pan(
     scroll_y: f32,
     drag_dy: i32,
@@ -40,13 +64,37 @@ fn clamped_vertical_pan(
     (scroll_y - drag_dy as f32).clamp(0.0, maximum)
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[cfg_attr(
+    all(
+        feature = "headless-picasso",
+        not(any(test, target_os = "trueos", target_os = "zkvm"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) fn clamped_pan_origin(origin: u32, drag: i32, canvas: u32, viewport: u32) -> u32 {
     let maximum = canvas.saturating_sub(viewport);
     (i64::from(origin) - i64::from(drag)).clamp(0, i64::from(maximum)) as u32
 }
 
-#[cfg(any(test, target_os = "trueos", target_os = "zkvm"))]
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[cfg_attr(
+    all(
+        feature = "headless-picasso",
+        not(any(test, target_os = "trueos", target_os = "zkvm"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) fn wheel_scroll_origin(
     origin: u32,
     wheel: i16,
@@ -69,15 +117,31 @@ pub(crate) fn wheel_scroll_origin(
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub use app::run;
 
-/// Retained DOM/layout state for the TRUEOS UI4 text viewport.
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) struct Ui4TextDocument {
+/// Renderer-independent retained DOM/layout state.
+///
+/// This is Solara's headless boundary: it owns the DOM projection, CSS-derived
+/// layout batch, and the compiler input to Picasso, but never a UI4 frame or a
+/// GPU surface.  A presentation backend may consume the resulting scene.
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[allow(dead_code)]
+pub(crate) struct HeadlessDocument {
     document: html::Document,
     batch: html::RenderBatch,
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl Ui4TextDocument {
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[allow(dead_code)]
+impl HeadlessDocument {
     pub(crate) fn content_height(&self) -> f32 {
         self.document.content_height
     }
@@ -99,8 +163,8 @@ impl Ui4TextDocument {
         self.document.scroll_y != before
     }
 
-    pub(crate) fn rebuild_scene<'a>(
-        &'a mut self,
+    pub(crate) fn rebuild_scene(
+        &mut self,
         scene: &mut picasso::PaintScene,
         canvas: (u32, u32),
         backdrop: trueos_helio_runtime::picasso_scene::Color,
@@ -114,6 +178,16 @@ impl Ui4TextDocument {
             self.document.scrollbar_side(),
             self.document.resize_handle_enabled(),
         )
+    }
+
+    /// Run the document-selected first JavaScript feature step before a
+    /// presentation backend observes the next retained Picasso publication.
+    #[cfg(feature = "sandboxed-scene-js")]
+    pub(crate) fn execute_opt_in_inline_scene_scripts(
+        &mut self,
+    ) -> Result<html::SceneScriptReport, String> {
+        self.document
+            .execute_opt_in_inline_scene_scripts(html::SceneScriptBudget::default())
     }
 
     pub(crate) const fn scrollbar_side(&self) -> html::ScrollbarSide {
@@ -146,22 +220,35 @@ impl Ui4TextDocument {
 }
 
 /// Parse and retain the same bundled document used by the desktop renderer.
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) fn embedded_ui4_document(page_width: f32) -> Result<Ui4TextDocument, String> {
-    ui4_document_for_html(
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[allow(dead_code)]
+pub(crate) fn embedded_headless_document(page_width: f32) -> Result<HeadlessDocument, String> {
+    headless_document_for_html(
         include_str!("../../docs/demoui.html"),
         "trueos://solara/docs/demoui.html",
         page_width,
     )
 }
 
-/// Parse one caller-supplied document and retain its DOM for UI4 repaints.
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) fn ui4_document_for_html(
+/// Parse one caller-supplied document and retain its DOM for later scene
+/// compilation.  This has no window, frame lease, or presentation side effect.
+#[cfg(any(
+    test,
+    target_os = "trueos",
+    target_os = "zkvm",
+    feature = "headless-picasso"
+))]
+#[allow(dead_code)]
+pub(crate) fn headless_document_for_html(
     source: &str,
     source_url: &str,
     page_width: f32,
-) -> Result<Ui4TextDocument, String> {
+) -> Result<HeadlessDocument, String> {
     use rust_qjs_dom::DomEngine;
 
     let mut engine = DomEngine::new().map_err(|error| format!("failed to start DOM: {error}"))?;
@@ -169,7 +256,7 @@ pub(crate) fn ui4_document_for_html(
         .parse(source, source_url)
         .map_err(|error| format!("failed to parse document: {error}"))?;
     let document = html::Document::from_dom(artifact, engine, page_width)?;
-    Ok(Ui4TextDocument {
+    Ok(HeadlessDocument {
         document,
         batch: html::RenderBatch::default(),
     })
@@ -204,5 +291,33 @@ mod tests {
         assert_eq!(wheel_scroll_origin(1_270, -1, true, 2_000, 720), 1_280);
         assert_eq!(wheel_scroll_origin(0, -1, true, 500, 720), 0);
         assert_eq!(wheel_scroll_origin(120, -1, false, 2_000, 720), 120);
+    }
+
+    #[cfg(feature = "headless-picasso")]
+    #[test]
+    fn headless_document_compiles_a_picasso_scene_without_a_frame() {
+        let mut document = super::headless_document_for_html(
+            "<style>h1 { color: #123456; }</style><main><h1>Headless scene</h1></main>",
+            "https://solara.test/headless",
+            640.0,
+        )
+        .expect("headless document parses");
+        let mut scene = super::picasso::PaintScene::new();
+        let publication = document
+            .rebuild_scene(
+                &mut scene,
+                (640, 480),
+                trueos_helio_runtime::picasso_scene::Color::rgba(250, 250, 250, 255),
+            )
+            .expect("headless document publishes a scene");
+
+        assert!(publication.logical_rows >= 2);
+        assert!(publication.font_lookup_rows >= 1);
+        assert!(
+            !scene
+                .lower((0, 0), (640, 480))
+                .expect("scene lowers for a later presentation backend")
+                .is_empty()
+        );
     }
 }

@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["ui4-scene"]
+// trueos-blueprint: features=["ui4-scene", "headless-picasso", "sandboxed-scene-js"]
 
 mod gpu_ui;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]

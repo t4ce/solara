@@ -50,7 +50,7 @@ struct SurfLaunch {
 
 struct SolaraView {
     frame: Frame,
-    document: crate::gpu_ui::Ui4TextDocument,
+    document: crate::gpu_ui::HeadlessDocument,
     paint_scene: crate::gpu_ui::picasso::PaintScene,
     canvas: (u32, u32),
     origin: (u32, u32),
@@ -445,10 +445,10 @@ impl SolaraView {
 }
 
 pub(crate) fn run() -> ! {
-    match trueos::async_fs::block_on(present_text_frame()) {
+    match trueos::async_fs::block_on(present_scene_frame()) {
         Ok(view) => {
             trueos::vsys::write_out(
-                b"solara: retained Picasso document + FontKernel canvas visible; wheel/middle-pan, Ctrl+wheel zoom, and DOM-configured scrollbar/resize handle active\n",
+                b"solara: headless DOM-to-Picasso scene + compatibility FontKernel canvas visible; wheel/middle-pan, Ctrl+wheel zoom, and DOM-configured scrollbar/resize handle active\n",
             );
             resident_view_loop(view)
         }
@@ -504,17 +504,17 @@ fn resident_view_loop(mut view: SolaraView) -> ! {
     }
 }
 
-async fn present_text_frame() -> Result<SolaraView, Error> {
+async fn present_scene_frame() -> Result<SolaraView, Error> {
     // Build the DOM once in logical page coordinates and materialize one warm
     // GPU canvas. Pan and maximize only change the crop composed into UI4.
     let document = render_document().await?;
-    let mut ui4_document = match document.source.as_deref() {
-        Some(source) => crate::gpu_ui::ui4_document_for_html(
+    let mut headless_document = match document.source.as_deref() {
+        Some(source) => crate::gpu_ui::headless_document_for_html(
             source,
             document.source_url.as_str(),
             FRAME_WIDTH as f32,
         ),
-        None => crate::gpu_ui::embedded_ui4_document(FRAME_WIDTH as f32),
+        None => crate::gpu_ui::embedded_headless_document(FRAME_WIDTH as f32),
     }
     .map_err(|error| {
         trueos::vsys::write_err(b"solara: DOM scene build failed: ");
@@ -522,7 +522,20 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         trueos::vsys::write_err(b"\n");
         Error::Invalid
     })?;
-    let content_height = ui4_document.content_height();
+    #[cfg(feature = "sandboxed-scene-js")]
+    let script_step = match headless_document.execute_opt_in_inline_scene_scripts() {
+        Ok(report) => (report.scripts, report.patches),
+        Err(error) => {
+            let message = format!(
+                "solara: sandboxed scene-script step rejected; preserving static CSS scene: {error}\n"
+            );
+            trueos::vsys::write_err(message.as_bytes());
+            (0, 0)
+        }
+    };
+    #[cfg(not(feature = "sandboxed-scene-js"))]
+    let script_step = (0usize, 0usize);
+    let content_height = headless_document.content_height();
     if content_height.ceil() > TEXT_CANVAS_MAX_HEIGHT as f32 {
         let message = format!(
             "solara: document height {:.1} exceeds retained V1 canvas {}; lower content is clipped until text tiling lands\n",
@@ -534,7 +547,7 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         FRAME_WIDTH.min(TEXT_CANVAS_MAX_WIDTH),
         (content_height.ceil() as u32).clamp(1, TEXT_CANVAS_MAX_HEIGHT),
     );
-    let image_requests = ui4_document.image_requests();
+    let image_requests = headless_document.image_requests();
     let mut paint_scene = crate::gpu_ui::picasso::PaintScene::new();
     let mut pending_images = Vec::with_capacity(image_requests.len());
     for request in image_requests {
@@ -545,7 +558,7 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
     }
     let mut view = SolaraView {
         frame: Frame::open(160, 180, FRAME_WIDTH, FRAME_HEIGHT)?,
-        document: ui4_document,
+        document: headless_document,
         paint_scene,
         canvas,
         origin: (0, 0),
@@ -583,7 +596,7 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         }
     }
     let summary = format!(
-        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} font_lookup_rows={} image_rows={} loaded_images={} lowered_commands={} text_rows={} glyphs={} fallback_style_mismatches={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} resize_handle={} zoom={}%% font=inconsolata source={}\n",
+        "solara: Picasso scene epoch={} logical_rows={} shape_rows={} font_lookup_rows={} image_rows={} loaded_images={} lowered_commands={} text_rows={} glyphs={} fallback_style_mismatches={} sandboxed_scripts={} sandboxed_patches={} viewport={}x{} canvas={}x{} content_height={:.1} scrollbar={} resize_handle={} zoom={}%% font=inconsolata source={}\n",
         scene_stats.epoch,
         scene_stats.logical_rows,
         scene_stats.shape_rows,
@@ -594,6 +607,8 @@ async fn present_text_frame() -> Result<SolaraView, Error> {
         stats.rows,
         stats.glyphs,
         stats.compatibility_style_mismatches,
+        script_step.0,
+        script_step.1,
         FRAME_WIDTH,
         FRAME_HEIGHT,
         view.canvas.0,
@@ -744,7 +759,7 @@ fn infer_image_format(bytes: &[u8]) -> Option<trueos::vmedia::ImageFormat> {
 }
 
 fn dispatch_pointer_event(
-    document: &mut crate::gpu_ui::Ui4TextDocument,
+    document: &mut crate::gpu_ui::HeadlessDocument,
     event: PointerEvent,
     modifiers: u8,
     client: (f32, f32),

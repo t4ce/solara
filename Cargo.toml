@@ -26,6 +26,7 @@ include = [
     "docs/demoui.css",
     "docs/video_demo.html",
     "docs/engine-handoff.md",
+    "docs/headless-picasso-map.md",
     "docs/youtube-js-probe.md",
 ]
 
@@ -38,7 +39,17 @@ url = "2"
 default = []
 gpu-text-only = ["solara-wgpu-shim/text-only"]
 gpu-visual-debug = ["solara-wgpu-shim/visual-debug"]
-trueos-blueprint = []
+# Compile the DOM -> retained SceneDB compiler without selecting a window or a
+# UI4 presentation backend.  TRUEOS uses this path as its browser boundary;
+# the current UI4 renderer is only one consumer of the resulting scene.
+headless-picasso = []
+# Opt-in first execution step.  It exposes only the bounded scene-patch
+# capability documented in docs/headless-picasso-map.md; page scripts remain
+# inert unless the document explicitly selects this step.
+sandboxed-scene-js = ["headless-picasso"]
+# A Blueprint always includes the current bounded feature step.  The source
+# directive additionally selects the TRUEOS `ui4-scene` dependency feature.
+trueos-blueprint = ["sandboxed-scene-js"]
 youtube-js-probe = []
 
 [[bin]]

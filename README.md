@@ -4,7 +4,7 @@ Solara is a small experimental browser built with Rust and QuickJS.
 
 The goal is to use Rust for the browser shell, resource loading, document model, and rendering pipeline, while QuickJS executes page JavaScript through a lightweight host API that connects the script runtime to the browser environment.
 
-> Current status: RustQJSDom supplies Solara's QuickJS runtime, Parse5 DOM, Lightning CSS cascade, and asset-request index. Solara retains that canonical artifact/runtime pair, resolves favicon and resource URLs, and hands authored computed styles to its existing paint pipeline. Page-script DOM bindings are still under development.
+> Current status: RustQJSDom supplies Solara's QuickJS runtime, Parse5 DOM, Lightning CSS cascade, and asset-request index. Solara retains that canonical artifact/runtime pair, resolves favicon and resource URLs, and hands authored computed styles to its existing paint pipeline. TRUEOS compiles this through a headless retained Picasso scene before UI4 presents it. Page-script DOM bindings are still under development; the separately opt-in `sandboxed-scene-js` step exposes only a bounded scene-patch capability.
 
 ## Goals
 
@@ -85,6 +85,10 @@ own WGPU window.
 `docs/demoui.html` remains the render-digest integration fixture. See [the
 engine handoff notes](docs/engine-handoff.md) for the boundary and update
 workflow.
+
+For the headless compiler boundary, the first sandboxed JavaScript feature
+step, and the separation between Solara's SceneDB shadow and Picasso's hosted
+redb asset store, see the [headless-to-Picasso map](docs/headless-picasso-map.md).
 
 The static scene supports mixed CSS font sizes end to end. Computed `font-size`
 and `line-height` values—including inherited sizes, heading defaults, relative
