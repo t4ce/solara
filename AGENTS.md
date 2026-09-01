@@ -1,26 +1,25 @@
 # Repository Guidelines
 
-> Branch note (`true`): the active Solara binary is intentionally inert while
-> the TRUEOS-first rendering boundary is rebuilt. The browser/DOM sources are
-> retained as research material but are not linked. Do not assume the legacy
-> WGPU, Linux window, UI4 frame, or Picasso presentation paths are active.
+> Branch note (`true`): the active Solara binary is a renderer-free five-page
+> RustQJSDom parse probe. Do not assume the legacy WGPU, Linux window, UI4
+> frame, or Picasso presentation paths are active.
 
 ## Project Structure & Module Organization
 
-Solara is a Rust 2024 experimental browser project. `src/main.rs` is the only
-active source on this branch. It provides an inert host entry and a minimal
-TRUEOS log-and-return entry. Historical browser work remains under
-`src/gpu_ui/`, including HTML parsing, layout, and painting experiments, but it
-is not declared as a module or compiled. The former WGPU shim crate and shader
-sources have been removed; its bundled font remains inactive for future text
-work.
+Solara is a Rust 2024 experimental browser project. `src/main.rs` and
+`src/parser_probe.rs` embed five documents, reuse one RustQJSDom runtime, and
+report when each validated artifact is ready for a future handoff. Historical
+browser work remains under `src/gpu_ui/`, including HTML parsing, layout, and
+painting experiments, but it is not declared as a module or compiled. The
+former WGPU shim crate and shader sources have been removed; its bundled font
+remains inactive for future text work.
 
 Reference material and demo inputs live in `docs/`, notably `demoui.html`, `demoui.css`, and `elements.md`. Cargo build output belongs in `target/` and must not be committed.
 
 ## Build, Test, and Development Commands
 
 - `cargo build --locked`: compile using the committed dependency lockfile.
-- `cargo run`: print the inert host placeholder and exit without opening a window.
+- `cargo run --locked`: parse all five embedded pages, print timings, and exit without opening a window.
 - `cargo check --locked`: run a fast type and borrow check without producing a binary.
 - `cargo test --locked`: run all unit and integration tests; this is also the publish workflow's test command.
 - `cargo fmt --all -- --check`: verify standard Rust formatting.
@@ -36,8 +35,9 @@ Use `rustfmt` defaults (four-space indentation) and keep modules focused on one 
 
 Add focused unit tests in a colocated `#[cfg(test)] mod tests`. Use descriptive
 names and add integration tests under `tests/` when behavior crosses module
-boundaries. Until a renderer is deliberately reintroduced, validate that
-`cargo run` remains inert and that the dependency graph remains free of WGPU.
+boundaries. Until a renderer is deliberately reintroduced, validate that all
+five artifacts reach the handoff and that the dependency graph remains free of
+WGPU.
 
 ## Commit & Pull Request Guidelines
 

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solara — Flow and Forms</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #263044;
+      background: #edf1f7;
+      font: 15px/1.5 system-ui, sans-serif;
+    }
+    .page {
+      width: min(94vw, 1080px);
+      margin: 24px auto;
+      padding: clamp(14px, 3vw, 34px);
+      border: 1px solid #b9c4d6;
+      background: white;
+    }
+    .lead::first-letter {
+      float: left;
+      margin: 2px 8px 0 0;
+      color: #4d44bb;
+      font-size: 3.2em;
+      line-height: .8;
+    }
+    .columns { column-width: 220px; column-gap: 28px; column-rule: 1px solid #d8deea; }
+    .columns h2 { break-after: avoid; }
+    .toolbar {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-block: 24px 12px;
+    }
+    .toolbar small { color: #65728a; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    caption { padding: 8px; font-weight: 700; text-align: left; }
+    th, td { padding: 9px; border: 1px solid #bcc7d8; text-align: left; }
+    th { background: #e7ebf4; }
+    td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    form {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 18px;
+      margin-top: 24px;
+    }
+    fieldset { min-width: 0; padding: 14px; border: 1px solid #9eabc0; }
+    fieldset.full { grid-column: 1 / -1; }
+    label { display: block; margin-bottom: 5px; font-weight: 600; }
+    input, select, textarea, button {
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 9px;
+      border: 1px solid #8998b0;
+      border-radius: 4px;
+      color: inherit;
+      background: #fff;
+      font: inherit;
+    }
+    textarea { min-height: 82px; resize: vertical; }
+    .choices { display: flex; flex-wrap: wrap; gap: 12px; }
+    .choices label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+    .choices input { width: auto; min-height: auto; }
+    .actions { display: flex; justify-content: flex-end; gap: 8px; grid-column: 1 / -1; }
+    .actions button { width: auto; min-width: 110px; }
+    .actions button[type="submit"] { color: white; background: #5147c7; }
+    .logical-box {
+      margin-block: 22px;
+      padding-inline: 18px;
+      border-inline-start: 5px solid #5147c7;
+      background: #f4f2ff;
+    }
+    .inline-run code, .inline-run mark, .inline-run a { margin-inline: 3px; }
+    @media (max-width: 620px) {
+      form { grid-template-columns: 1fr; }
+      fieldset.full, .actions { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Flow, intrinsic sizing, tables and controls</h1>
+    <p class="lead">
+      Browser layout begins with ordinary flow. This paragraph deliberately
+      wraps around a floated initial while <strong>strong text</strong>,
+      <em>emphasis</em>, <code>inline code</code>, and a
+      <a href="https://example.test/layout">link</a> share the same line boxes.
+    </p>
+    <section class="columns">
+      <h2>Column one</h2>
+      <p>Multi-column content provides a useful retained declaration even before mapping.</p>
+      <h2>Column two</h2>
+      <p>Break rules, column gaps, and intrinsic widths remain explicit inputs.</p>
+      <h2>Column three</h2>
+      <p>Unsupported layout modes must degrade visibly instead of disappearing.</p>
+    </section>
+    <aside class="logical-box">
+      Logical margins, padding, and borders make writing-direction assumptions observable.
+    </aside>
+    <div class="toolbar">
+      <h2>Parser batches</h2>
+      <small>fixed table layout</small>
+    </div>
+    <table>
+      <caption>Five embedded documents</caption>
+      <thead><tr><th>Page</th><th>Purpose</th><th>Weight</th></tr></thead>
+      <tbody>
+        <tr><td>TrueOS home</td><td>Real page CSS and retained script</td><td>1</td></tr>
+        <tr><td>All elements</td><td>HTML vocabulary</td><td>2</td></tr>
+        <tr><td>Text/borders</td><td>Absolute geometry</td><td>3</td></tr>
+        <tr><td>Panels</td><td>Grid and flex math</td><td>4</td></tr>
+        <tr><td>Flow/forms</td><td>Intrinsic controls and table cells</td><td>5</td></tr>
+      </tbody>
+    </table>
+    <form action="/probe" method="post">
+      <fieldset>
+        <legend>Identity</legend>
+        <label for="name">Name</label>
+        <input id="name" name="name" value="Solara">
+        <label for="mode">Mode</label>
+        <select id="mode" name="mode">
+          <option>Parse only</option>
+          <option>Layout later</option>
+        </select>
+      </fieldset>
+      <fieldset>
+        <legend>Range and progress</legend>
+        <label for="range">Confidence</label>
+        <input id="range" type="range" min="0" max="100" value="72">
+        <label for="progress">Coverage</label>
+        <progress id="progress" max="100" value="64">64%</progress>
+      </fieldset>
+      <fieldset class="full">
+        <legend>Options</legend>
+        <div class="choices">
+          <label><input type="checkbox" checked> retain CSS</label>
+          <label><input type="checkbox" checked> index assets</label>
+          <label><input type="radio" name="scripts" checked> scripts inert</label>
+          <label><input type="radio" name="scripts"> scripts sandboxed later</label>
+        </div>
+        <label for="notes">Notes</label>
+        <textarea id="notes">The DOM artifact is the handoff boundary.</textarea>
+      </fieldset>
+      <div class="actions">
+        <button type="reset">Reset</button>
+        <button type="submit">Queue</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

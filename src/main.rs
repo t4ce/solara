@@ -1,14 +1,9 @@
 // trueos-blueprint: features=["trueos-first"]
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn main() {
-    println!("solara: TRUEOS-first inert host placeholder (no browser or renderer)");
-}
+mod parser_probe;
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn main() {
-    trueos::logl::log(
-        trueos::logl::level::INFO,
-        "solara: TRUEOS-first inert entry; no Frame, text rows, shapes, or presentation",
-    );
+    if let Err(error) = parser_probe::run() {
+        parser_probe::report_error(format_args!("solara: five-page parse failed: {error}"));
+    }
 }

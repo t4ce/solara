@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solara — Divs and Panels</title>
+  <style>
+    :root {
+      --space: 12px;
+      --rail: clamp(160px, 22vw, 260px);
+      --ink: #d8e1f0;
+      --muted: #91a0b6;
+      --line: #3c4b61;
+      --panel: #182130;
+      --accent: #8b7cff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-height: 100vh;
+      padding: var(--space);
+      background: #0d121b;
+      color: var(--ink);
+      font: 14px/1.45 ui-monospace, monospace;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: var(--rail) minmax(280px, 1fr) minmax(180px, 28%);
+      grid-template-rows: 58px minmax(360px, calc(100vh - 112px)) 42px;
+      grid-template-areas:
+        "head head head"
+        "nav main aside"
+        "foot foot foot";
+      gap: var(--space);
+      max-width: 1280px;
+      margin-inline: auto;
+    }
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: 0 8px 22px rgb(0 0 0 / 24%);
+    }
+    header.panel {
+      grid-area: head;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-inline: 18px;
+    }
+    nav.panel { grid-area: nav; padding: var(--space); }
+    main.panel { grid-area: main; overflow: auto; }
+    aside.panel { grid-area: aside; padding: var(--space); }
+    footer.panel {
+      grid-area: foot;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+    }
+    .brand { font-size: 19px; letter-spacing: .04em; }
+    .status {
+      padding: 4px 9px;
+      border: 1px solid #4aaa78;
+      border-radius: 999px;
+      color: #71dea1;
+    }
+    nav ul { margin: 0; padding: 0; list-style: none; }
+    nav li + li { margin-top: 6px; }
+    nav a {
+      display: block;
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: inherit;
+      text-decoration: none;
+    }
+    nav a[aria-current="page"] { background: #28344a; color: white; }
+    .main-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(24 33 48 / 94%);
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      padding: 16px;
+    }
+    .card {
+      position: relative;
+      min-height: 118px;
+      padding: 14px;
+      border: 1px solid #465673;
+      border-radius: 7px;
+      background: linear-gradient(145deg, #202b3e, #151d2a);
+    }
+    .card.wide { grid-column: span 2; }
+    .card .badge {
+      position: absolute;
+      top: -7px;
+      right: 9px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--accent);
+      color: #0d121b;
+      font-size: 11px;
+    }
+    .split {
+      display: flex;
+      gap: 8px;
+      height: 72px;
+      margin-top: 10px;
+    }
+    .split > div {
+      display: grid;
+      place-items: center;
+      flex: 1 1 0;
+      border: 1px dashed #52637e;
+    }
+    .split > div:first-child { flex-grow: 2; }
+    .meter { height: 8px; overflow: hidden; border-radius: 8px; background: #0b1018; }
+    .meter > span { display: block; width: 68%; height: 100%; background: var(--accent); }
+    aside .stack { display: flex; flex-direction: column; gap: 10px; }
+    aside section { padding: 10px; border: 1px solid var(--line); }
+    @media (max-width: 760px) {
+      .shell {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        grid-template-areas: "head" "nav" "main" "aside" "foot";
+      }
+      .card.wide { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="panel">
+      <div class="brand">Solara Panel Matrix</div>
+      <div class="status">handoff candidate</div>
+    </header>
+    <nav class="panel" aria-label="Panel sections">
+      <ul>
+        <li><a href="#overview" aria-current="page">Overview</a></li>
+        <li><a href="#geometry">Geometry</a></li>
+        <li><a href="#resources">Resources</a></li>
+        <li><a href="#history">History</a></li>
+      </ul>
+    </nav>
+    <main class="panel" id="overview">
+      <div class="main-head">Nested grid, flex, sticky, overflow and absolute positioning</div>
+      <div class="cards">
+        <article class="card wide">
+          <span class="badge">wide</span>
+          <h2>Workspace</h2>
+          <p>A spanning card checks track math and intrinsic minimums.</p>
+          <div class="split"><div>2fr</div><div>1fr</div></div>
+        </article>
+        <article class="card"><h2>DOM</h2><p>147 normalized nodes</p></article>
+        <article class="card"><h2>CSS</h2><p>Open declaration map</p></article>
+        <article class="card wide">
+          <h2>Readiness</h2>
+          <div class="meter"><span></span></div>
+        </article>
+        <article class="card"><h2>Min</h2><p>minmax(150px, 1fr)</p></article>
+        <article class="card"><h2>Max</h2><p>clamp(160px, 22vw, 260px)</p></article>
+      </div>
+    </main>
+    <aside class="panel">
+      <div class="stack">
+        <section><strong>Viewport</strong><br>percentage and viewport units</section>
+        <section><strong>Containment</strong><br>min-width: 0</section>
+        <section><strong>Overflow</strong><br>scrolling remains host policy</section>
+      </div>
+    </aside>
+    <footer class="panel">No renderer selected</footer>
+  </div>
+</body>
+</html>

@@ -22,20 +22,11 @@ use crate::ffi::{
 
 type JsonHostFunction = dyn FnMut(&[Value]) -> Result<Value, String> + 'static;
 
+#[derive(Default)]
 struct HostState {
     functions: Vec<Box<JsonHostFunction>>,
     execution_deadline: Option<Instant>,
     execution_interrupted: bool,
-}
-
-impl Default for HostState {
-    fn default() -> Self {
-        Self {
-            functions: Vec::new(),
-            execution_deadline: None,
-            execution_interrupted: false,
-        }
-    }
 }
 
 unsafe extern "C" fn execution_interrupt(_runtime: *mut JSRuntime, opaque: *mut c_void) -> c_int {

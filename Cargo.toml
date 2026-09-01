@@ -3,7 +3,7 @@ name = "solara"
 version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
-description = "TRUEOS-first Solara placeholder; browser/rendering work is currently inactive."
+description = "TRUEOS-first, renderer-free HTML and CSS handoff probe."
 default-run = "solara"
 readme = "README.md"
 license = "MIT"
@@ -24,18 +24,24 @@ include = [
     "docs/demoui.css",
     "docs/TextAndBorders.html",
     "docs/TextAndBorders.css",
+    "docs/TrueOsHome.html",
+    "docs/DivsAndPanels.html",
+    "docs/FlowAndForms.html",
     "docs/video_demo.html",
     "docs/engine-handoff.md",
     "docs/headless-picasso-map.md",
     "docs/youtube-js-probe.md",
 ]
 
+[dependencies]
+rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+
 [features]
 default = []
-# The browser, DOM, WGPU, and UI4 scene paths are intentionally inactive on
-# this branch. These names remain only as an explicit record that no renderer
-# feature is selected while the TRUEOS-first entry is being rebuilt.
+# This stage embeds and parses the fixed five-page corpus. It intentionally
+# selects no WGPU, UI4 frame, Picasso, networking, or page-script execution.
 trueos-first = []
+
 [[bin]]
 name = "solara"
 path = "src/main.rs"
