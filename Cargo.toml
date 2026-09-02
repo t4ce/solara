@@ -3,7 +3,7 @@ name = "solara"
 version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
-description = "TRUEOS-first, renderer-free HTML and CSS handoff probe."
+description = "TRUEOS-first, renderer-free HTML, CSS, and first-script handoff probe."
 default-run = "solara"
 readme = "README.md"
 license = "MIT"
@@ -27,9 +27,11 @@ include = [
     "docs/TrueOsHome.html",
     "docs/DivsAndPanels.html",
     "docs/FlowAndForms.html",
+    "docs/flow-and-forms.js",
     "docs/video_demo.html",
     "docs/engine-handoff.md",
     "docs/headless-picasso-map.md",
+    "docs/javascript-css-lifecycle.md",
     "docs/youtube-js-probe.md",
 ]
 
@@ -39,7 +41,8 @@ rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 [features]
 default = []
 # This stage embeds and parses the fixed five-page corpus. It intentionally
-# selects no WGPU, UI4 frame, Picasso, networking, or page-script execution.
+# selects no WGPU, UI4 frame, Picasso, networking, or general page-script
+# scheduling. The host executes at most the first supported classic script.
 trueos-first = []
 
 [[bin]]
