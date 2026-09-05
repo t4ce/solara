@@ -1,8 +1,9 @@
 # Repository Guidelines
 
-> Branch note (`true`): the active Solara binary is a renderer-free five-page
-> RustQJSDom parse probe. Do not assume the legacy WGPU, Linux window, UI4
-> frame, or Picasso presentation paths are active.
+> Branch note (`true`): the active Solara binary is a renderer-free RustQJSDom
+> parse probe. Direct starts use the five-page corpus; Shell2 `surf` launches
+> parse one staged page selected by `vFile:launch`. Do not assume the legacy
+> WGPU, Linux window, UI4 frame, or Picasso presentation paths are active.
 
 ## Project Structure & Module Organization
 

@@ -37,6 +37,7 @@ include = [
 
 [dependencies]
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
+url = "2.5.8"
 
 [features]
 default = []

@@ -11,13 +11,13 @@ const TEXT_AND_BORDERS_CSS: &str = include_str!("../docs/TextAndBorders.css");
 const FLOW_AND_FORMS_JS: &str = include_str!("../docs/flow-and-forms.js");
 
 #[derive(Clone, Copy)]
-struct EmbeddedPage {
+struct EmbeddedPage<'a> {
     name: &'static str,
-    url: &'static str,
-    html: &'static str,
+    url: &'a str,
+    html: &'a str,
 }
 
-const PAGES: [EmbeddedPage; 5] = [
+const PAGES: [EmbeddedPage<'static>; 5] = [
     EmbeddedPage {
         name: "trueos-home",
         url: "https://trueos.eu/",
@@ -46,16 +46,37 @@ const PAGES: [EmbeddedPage; 5] = [
 ];
 
 pub(crate) fn run() -> Result<(), String> {
+    run_pages(&PAGES, true)
+}
+
+pub(crate) fn run_page(url: &str, html: &str) -> Result<(), String> {
+    run_pages(
+        &[EmbeddedPage {
+            name: "surf",
+            url,
+            html,
+        }],
+        false,
+    )
+}
+
+fn run_pages(pages: &[EmbeddedPage<'_>], execute_scripts: bool) -> Result<(), String> {
     let suite_started = monotonic_nanos();
     let engine_started = monotonic_nanos();
     let mut engine = DomEngine::with_stylesheet_loader(load_embedded_stylesheet)
         .map_err(|error| format!("DOM engine initialization: {error}"))?;
     let engine_ns = monotonic_nanos().saturating_sub(engine_started);
+    let script_mode = if execute_scripts {
+        "first-classic-only"
+    } else {
+        "disabled"
+    };
 
     report_info(format_args!(
-        "solara: parse-suite start pages={} engine_us={} renderer=none scripts=first-classic-only",
-        PAGES.len(),
+        "solara: parse-suite start pages={} engine_us={} renderer=none scripts={}",
+        pages.len(),
         nanos_to_micros(engine_ns),
+        script_mode,
     ));
 
     let mut ready_pages = 0usize;
@@ -67,7 +88,7 @@ pub(crate) fn run() -> Result<(), String> {
     let mut parse_ns = 0u64;
     let mut script_ns = 0u64;
 
-    for page in PAGES {
+    for page in pages {
         let started = monotonic_nanos();
         let artifact = engine
             .parse(page.html, page.url)
@@ -76,9 +97,12 @@ pub(crate) fn run() -> Result<(), String> {
         let nodes = count_nodes(&artifact);
 
         let script_started = monotonic_nanos();
-        let script_execution =
+        let script_execution = if execute_scripts {
             execute_first_page_script(engine.js_mut(), &artifact, load_embedded_script)
-                .map_err(|error| format!("{} page script: {error}", page.name))?;
+                .map_err(|error| format!("{} page script: {error}", page.name))?
+        } else {
+            None
+        };
         let elapsed_script_ns = monotonic_nanos().saturating_sub(script_started);
         if script_execution.is_some() {
             executed_scripts = executed_scripts.saturating_add(1);
@@ -92,9 +116,10 @@ pub(crate) fn run() -> Result<(), String> {
         parse_ns = parse_ns.saturating_add(elapsed_ns);
         script_ns = script_ns.saturating_add(elapsed_script_ns);
 
-        let script_order = script_execution
-            .as_ref()
-            .map_or_else(|| String::from("-"), |execution| execution.order.to_string());
+        let script_order = script_execution.as_ref().map_or_else(
+            || String::from("-"),
+            |execution| execution.order.to_string(),
+        );
         let script_source = script_execution
             .as_ref()
             .map_or("none", |execution| execution.source_kind.as_str());
@@ -133,7 +158,7 @@ pub(crate) fn run() -> Result<(), String> {
     report_info(format_args!(
         "solara: handoff-ready summary ready={}/{} bytes={} nodes={} style_slots={} assets={} scripts_executed={} engine_us={} parse_us={} script_us={} total_us={} ui4_frame=0 wgpu=0",
         ready_pages,
-        PAGES.len(),
+        pages.len(),
         source_bytes,
         node_count,
         style_slots,

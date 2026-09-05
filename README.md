@@ -1,7 +1,7 @@
 # Solara
 
 Solara is currently a TRUEOS-first, renderer-free DOM/CSS handoff probe with a
-bounded first page-script step.
+bounded first page-script step and a Shell2 `surf` launch path.
 
 The repository retains the browser experiments for later work, but this branch
 has one deliberate job: measure how quickly a fixed five-page corpus becomes a
@@ -14,6 +14,11 @@ then prove that the retained QuickJS runtime can execute one selected script.
 > page, and exits. Every script tag remains preserved in the artifact; later
 > scripts, modules, import maps, and data scripts remain inert.
 
+When Shell2 launches Solara through `surf <url>`, it supplies a one-shot run
+script containing the canonical page URL and the TRUEOSFS path of the staged
+HTML. Solara validates the HTTP(S) URL with the Rust `url` crate, reads that
+single document, parses it without executing network page scripts, and exits.
+
 ## Current boundary
 
 The active `solara` binary performs DOM/CSS compilation plus at most one
@@ -21,6 +26,9 @@ bounded classic script evaluation per page on Linux and TRUEOS. A page is
 "handoff ready" after the typed `rustqjsdom.artifact/v2` contract validates. It
 does not request a UI4 `Frame`, text rows/canvas, shapes, Picasso lowering, WGPU
 surface, Linux window, or presentation.
+
+The five-page corpus is used when Solara starts without a run script. A
+Shell2 `surf` launch parses only the staged page named by its run script.
 
 The embedded corpus is:
 
