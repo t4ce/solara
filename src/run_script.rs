@@ -5,17 +5,17 @@ const LAUNCH_VFILE: &[u8] = b"vFile:launch";
 #[derive(Debug)]
 pub(crate) struct OpenRequest {
     pub(crate) url: Url,
-    pub(crate) source: String,
+    pub(crate) source: Option<String>,
 }
 
 pub(crate) fn read() -> Result<Option<OpenRequest>, String> {
     let Some(script) = read_launch_script()? else {
         return Ok(None);
     };
-    parse(&script).map(Some)
+    parse(&script)
 }
 
-fn parse(script: &str) -> Result<OpenRequest, String> {
+fn parse(script: &str) -> Result<Option<OpenRequest>, String> {
     let mut url = None;
     let mut source = None;
 
@@ -24,7 +24,7 @@ fn parse(script: &str) -> Result<OpenRequest, String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        if line == "fs-scope trueosfs" {
+        if line == "fs-scope trueosfs" || line == "home" {
             continue;
         }
         if let Some(value) = line.strip_prefix("open ") {
@@ -59,10 +59,11 @@ fn parse(script: &str) -> Result<OpenRequest, String> {
         return Err(format!("unknown surf run-script directive {line:?}"));
     }
 
-    Ok(OpenRequest {
-        url: url.ok_or_else(|| String::from("surf run script has no open directive"))?,
-        source: source.ok_or_else(|| String::from("surf run script has no source directive"))?,
-    })
+    match url {
+        Some(url) => Ok(Some(OpenRequest { url, source })),
+        None if source.is_none() => Ok(None),
+        None => Err("surf run script has a source without an open directive".into()),
+    }
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -89,13 +90,21 @@ mod tests {
         let request = parse(
             "fs-scope trueosfs\nopen https://example.com/a/../page?q=hello%20world\nsource apps/common/solara/surf/surf-1.html\n",
         )
-        .unwrap();
+        .unwrap().unwrap();
 
         assert_eq!(
             request.url.as_str(),
             "https://example.com/page?q=hello%20world"
         );
-        assert_eq!(request.source, "apps/common/solara/surf/surf-1.html");
+        assert_eq!(request.source.as_deref(), Some("apps/common/solara/surf/surf-1.html"));
+    }
+
+    #[test]
+    fn home_and_direct_url_need_no_staged_file() {
+        assert!(parse("home\n").unwrap().is_none());
+        let request = parse("open https://example.com/\n").unwrap().unwrap();
+        assert!(request.source.is_none());
+        assert!(parse("source page.html").is_err());
     }
 
     #[test]

@@ -3,9 +3,11 @@
 #[cfg(feature = "spec-layout")]
 mod layout_probe;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
-mod native_window;
-#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
 mod native_images;
+#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+mod native_tui;
+#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+mod native_window;
 mod page_script;
 mod parser_probe;
 mod run_script;
@@ -17,18 +19,24 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let Some(request) = run_script::read()? else {
-        #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
-        return native_window::run(None);
-        #[cfg(not(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm"))))]
-        return parser_probe::run();
-    };
-
-    let html = read_source(&request.source)?;
     #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
-    return native_window::run(Some((request.url.as_str(), &html)));
+    {
+        #[cfg(feature = "native-demos")]
+        return native_window::run(None);
+        #[cfg(not(feature = "native-demos"))]
+        return native_window::run_browser(run_script::read()?);
+    }
     #[cfg(not(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm"))))]
-    parser_probe::run_page(request.url.as_str(), &html)
+    {
+        let Some(request) = run_script::read()? else {
+            return parser_probe::run();
+        };
+        let source = request
+            .source
+            .ok_or("host probe requires a staged source file")?;
+        let html = read_source(&source)?;
+        parser_probe::run_page(request.url.as_str(), &html)
+    }
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]

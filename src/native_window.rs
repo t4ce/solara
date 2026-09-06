@@ -9,6 +9,7 @@ use std::sync::Arc;
 use trueos::ui4_scene::{Damage, Error as UiError, Frame, ResizeEvent};
 use trueos::vgpu::{self, Buffer, Device, Queue, QueueClass, RenderPipeline, ShaderModule};
 
+#[cfg(feature = "native-demos")]
 const DEMOS: [(&str, &str); 4] = [
     (
         "FrameworkLayout.html",
@@ -157,9 +158,11 @@ impl Window {
     }
     fn tick(&mut self) -> Result<(), Error> {
         let started = trueos::clock::Instant::now();
+        let resources_changed = self.resources.poll()?;
         if self
             .images
             .poll(&self.resources, self.device, &mut self.layout)?
+            || resources_changed
         {
             if !self.layout.resolve(0.0)? {
                 return Ok(());
@@ -427,6 +430,7 @@ impl Drop for Window {
     }
 }
 
+#[cfg(feature = "native-demos")]
 pub(crate) fn run(page: Option<(&str, &str)>) -> Result<(), String> {
     let mut engine =
         DomEngine::with_stylesheet_loader(crate::parser_probe::load_embedded_stylesheet)
@@ -492,6 +496,171 @@ pub(crate) fn run(page: Option<(&str, &str)>) -> Result<(), String> {
                     window.failed = true;
                 }
             }
+        }
+        trueos::vsys::sleep_ms(16);
+    }
+}
+
+fn page_layout(
+    engine: &mut DomEngine,
+    url: &str,
+    html: &str,
+    width: u32,
+    height: u32,
+) -> Result<(SpecLayout, Arc<Resources>), String> {
+    let artifact = engine.parse(html, url).map_err(|e| e.to_string())?;
+    let resources = Arc::new(Resources::default());
+    let layout = SpecLayout::from_artifact(
+        &artifact,
+        solara::spec_layout::DocumentConfig {
+            viewport: Some(Viewport {
+                window_size: (width, height),
+                ..Default::default()
+            }),
+            font_ctx: Some(solara::spec_layout::bundled_font_context()),
+            net_provider: Some(resources.clone()),
+            ..Default::default()
+        },
+    )?;
+    Ok((layout, resources))
+}
+
+impl Window {
+    fn navigate(&mut self, layout: SpecLayout, resources: Arc<Resources>) -> Result<(), String> {
+        let mesh = self.painter.paint(layout.document())?;
+        self.images.release(self.device);
+        self.layout = layout;
+        self.resources = resources;
+        self.mesh = mesh;
+        self.scroll_y = 0.0;
+        self.dirty = true;
+        self.uploaded = false;
+        self.failed = false;
+        Ok(())
+    }
+}
+
+pub(crate) fn run_browser(initial: Option<crate::run_script::OpenRequest>) -> Result<(), String> {
+    use crate::native_tui::{Action, Navigator};
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll, Waker},
+    };
+    let mut navigator = Navigator::new().map_err(|e| format!("navigator: {e}"))?;
+    let mut engine =
+        DomEngine::with_stylesheet_loader(crate::parser_probe::load_embedded_stylesheet)
+            .map_err(|e| e.to_string())?;
+    let (output_w, output_h) =
+        trueos::ui4_scene::output_dimensions().map_err(|e| format!("output: {e:?}"))?;
+    let (width, height) = (
+        output_w.saturating_sub(80).max(320),
+        output_h.saturating_sub(100).max(240),
+    );
+    let (layout, resources) = page_layout(
+        &mut engine,
+        "trueos://solara/home",
+        include_str!("../docs/home.html"),
+        width,
+        height,
+    )?;
+    let mut window =
+        Window::open(layout, resources, 40, 50, width, height).map_err(|e| e.to_string())?;
+    navigator.status("Home");
+    type FetchPage = Pin<Box<dyn Future<Output = Result<Vec<u8>, String>>>>;
+    let mut fetching: Option<(url::Url, FetchPage)> = None;
+    let mut styling: Option<(url::Url, SpecLayout, Arc<Resources>)> = None;
+    let mut requested = initial
+        .map(|r| {
+            if let Some(source) = r.source {
+                match crate::read_source(&source) {
+                    Ok(html) => {
+                        match page_layout(&mut engine, r.url.as_str(), &html, width, height) {
+                            Ok((layout, resources)) => {
+                                styling = Some((r.url.clone(), layout, resources))
+                            }
+                            Err(error) => navigator.status(error),
+                        }
+                    }
+                    Err(error) => navigator.status(error),
+                }
+                None
+            } else {
+                Some(r.url)
+            }
+        })
+        .flatten();
+    loop {
+        trueos::vsys::poll_once();
+        match navigator.tick().map_err(|e| format!("navigator: {e}"))? {
+            Some(Action::Quit) => return Ok(()),
+            Some(Action::Navigate(url)) => requested = Some(url),
+            None => {}
+        }
+        if let Some(url) = requested.take() {
+            navigator.location(&url);
+            navigator.status(format!("Loading {url}"));
+            styling = None;
+            // Replacing the future discards the previous kernel operation.
+            fetching = Some((
+                url.clone(),
+                Box::pin(crate::native_images::fetch_bytes(url.into())),
+            ));
+        }
+        if let Some((_, future)) = &mut fetching
+            && let Poll::Ready(result) = future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            let (url, _) = fetching.take().expect("polled request");
+            match result
+                .and_then(|bytes| {
+                    String::from_utf8(bytes).map_err(|_| "Page is not UTF-8 HTML".into())
+                })
+                .and_then(|html| {
+                    page_layout(
+                        &mut engine,
+                        url.as_str(),
+                        &html,
+                        window.frame.width(),
+                        window.frame.height(),
+                    )
+                }) {
+                Ok((layout, resources)) => {
+                    navigator.status("Laying out page…");
+                    styling = Some((url, layout, resources));
+                }
+                Err(error) => navigator.status(format!("Could not open {url}: {error}")),
+            }
+        }
+        if let Some((_, layout, resources)) = &mut styling {
+            resources.poll()?;
+            // Resizes during the fetch must be reflected in the arriving page.
+            layout.set_viewport(Viewport {
+                window_size: (window.frame.width(), window.frame.height()),
+                ..Default::default()
+            })?;
+            if layout.resolve(0.0)? {
+                let (url, layout, resources) = styling.take().expect("resolved page");
+                match window.navigate(layout, resources) {
+                    Ok(()) => {
+                        navigator.location(&url);
+                        navigator.status(format!("Loaded {url}"));
+                    }
+                    Err(error) => navigator.status(format!("Layout failed: {error}")),
+                }
+            }
+        }
+        if !window.failed
+            && let Err(error) = window.tick()
+            && !error.busy()
+        {
+            navigator.status(format!("Page rendering failed: {error}"));
+            crate::parser_probe::report_error(format_args!(
+                "solara: native-window failed window={} error={error}",
+                window.frame.window_id()
+            ));
+            window.failed = true;
         }
         trueos::vsys::sleep_ms(16);
     }

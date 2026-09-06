@@ -19,6 +19,8 @@ use trueos::{
 pub(crate) struct Resources {
     queued: Mutex<VecDeque<String>>,
     seen: Mutex<BTreeSet<String>>,
+    requests: Mutex<VecDeque<(String, Box<dyn NetHandler>)>>,
+    fetching: Mutex<Vec<PendingResource>>,
 }
 impl NetProvider for Resources {
     fn fetch(&self, _: usize, request: Request, handler: Box<dyn NetHandler>) {
@@ -30,18 +32,95 @@ impl NetProvider for Resources {
             // Completion is delivered as decoded Resource::Image, bypassing
             // Blitz's encoded-byte handler and its optional client decoders.
         } else {
-            let css = crate::parser_probe::load_embedded_stylesheet("", None, request.url.path())
-                .map(|v| v.css)
-                .unwrap_or_default();
-            handler.bytes(request.url.to_string(), Bytes::from(css));
+            if let Ok(css) =
+                crate::parser_probe::load_embedded_stylesheet("", None, request.url.path())
+            {
+                handler.bytes(request.url.to_string(), Bytes::from(css.css));
+            } else if matches!(request.url.scheme(), "http" | "https") {
+                self.requests
+                    .lock()
+                    .expect("resource lock")
+                    .push_back((request.url.into(), handler));
+            } else {
+                handler.bytes(request.url.into(), Bytes::new());
+            }
         }
     }
 }
+struct PendingResource {
+    url: String,
+    handler: Box<dyn NetHandler>,
+    future: Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>>,
+}
+impl Resources {
+    pub fn poll(&self) -> Result<bool, String> {
+        let mut fetching = self.fetching.lock().map_err(|_| "resource lock")?;
+        while fetching.len() < 2 {
+            let Some((url, handler)) = self
+                .requests
+                .lock()
+                .map_err(|_| "resource lock")?
+                .pop_front()
+            else {
+                break;
+            };
+            fetching.push(PendingResource {
+                future: Box::pin(fetch_bytes(url.clone())),
+                url,
+                handler,
+            });
+        }
+        let mut changed = false;
+        let mut index = 0;
+        while index < fetching.len() {
+            let result = fetching[index]
+                .future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()));
+            let Poll::Ready(result) = result else {
+                index += 1;
+                continue;
+            };
+            let request = fetching.remove(index);
+            let bytes = match result {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    crate::parser_probe::report_error(format_args!(
+                        "solara: resource-failed url={} error={error}",
+                        request.url
+                    ));
+                    Vec::new()
+                }
+            };
+            request.handler.bytes(request.url, Bytes::from(bytes));
+            changed = true;
+        }
+        Ok(changed)
+    }
+}
+
 struct Fetch(u32);
 impl Drop for Fetch {
     fn drop(&mut self) {
         let _ = netfs::fetch_bytes_discard(self.0);
     }
+}
+/// Poll the kernel's existing HTTP/HTTPS operation; dropping cancels it.
+pub(crate) async fn fetch_bytes(url: String) -> Result<Vec<u8>, String> {
+    let fetch = Fetch(netfs::fetch_bytes(url.as_bytes()).map_err(|e| format!("fetch start: {e}"))?);
+    let started = trueos::clock::monotonic_millis();
+    poll_fn(|cx| match netfs::fetch_bytes_result_len(fetch.0) {
+        Err(-8) if trueos::clock::monotonic_millis().saturating_sub(started) < 30_000 => {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+        Err(e) => Poll::Ready(Err(format!("fetch: {e}"))),
+        Ok(len) if len > 16 * 1024 * 1024 => Poll::Ready(Err("resource exceeds 16 MiB".into())),
+        Ok(_) => {
+            Poll::Ready(netfs::fetch_bytes_read(fetch.0).map_err(|e| format!("fetch read: {e}")))
+        }
+    })
+    .await
 }
 async fn load(url: String) -> Result<vmedia::DecodedImage, String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
@@ -50,22 +129,10 @@ async fn load(url: String) -> Result<vmedia::DecodedImage, String> {
         && matches!(parsed.path(), "/assets/cat.jpg" | "/assets/cat.jpeg")
     {
         include_bytes!("../assets/images/cat.jpg").to_vec()
+    } else if url == "trueos://solara/assets/logo.jpg" {
+        include_bytes!("../assets/images/logo.jpg").to_vec()
     } else if matches!(parsed.scheme(), "http" | "https") {
-        let fetch =
-            Fetch(netfs::fetch_bytes(url.as_bytes()).map_err(|e| format!("fetch start: {e}"))?);
-        let started = trueos::clock::monotonic_millis();
-        poll_fn(|cx| match netfs::fetch_bytes_result_len(fetch.0) {
-            Err(-8) if trueos::clock::monotonic_millis().saturating_sub(started) < 30_000 => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-            Err(e) => Poll::Ready(Err(format!("fetch: {e}"))),
-            Ok(len) if len > 16 * 1024 * 1024 => Poll::Ready(Err("JPEG exceeds 16 MiB".into())),
-            Ok(_) => Poll::Ready(
-                netfs::fetch_bytes_read(fetch.0).map_err(|e| format!("fetch read: {e}")),
-            ),
-        })
-        .await?
+        fetch_bytes(url.clone()).await?
     } else {
         return Err("unsupported image URL".into());
     };
