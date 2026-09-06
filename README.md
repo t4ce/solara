@@ -34,6 +34,12 @@ a pasted full URL supplies its own protocol. **Ctrl-L** selects the address.
 **Esc** parks the navigator in Shell2 while the page stays alive; **vmx_tui**
 reopens it. **Ctrl-Q** closes this Solara instance.
 
+The one-tab navigator also recognizes three built-in fixture addresses:
+`demo1` opens `TextAndBorders.html`, `demo2` opens `DivsAndPanels.html`, and
+`demo3` opens `FlowAndForms.html`. Each replaces the current document in the
+same VMX/UI4 tab; no extra tabs or demo windows are created. The browser loop
+uses a deliberately low 250 ms cadence for navigation, input, and redraw polls.
+
 HTML and linked resources use the existing asynchronous kernel HTTP/HTTPS ABI.
 Failed navigation leaves the prior document available and reports the error in
 the terminal. Network page scripts remain inert; this first navigator does not

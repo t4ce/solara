@@ -11,16 +11,15 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use solara::navigation::Address;
+use solara::navigation::{Address, NavigationTarget};
 use std::{
     io::{self, Write},
     time::Duration,
 };
 use trueos::vshell::{TerminalLease, TerminalParkingTicket, TerminalReentry};
-use url::Url;
 
 pub enum Action {
-    Navigate(Url),
+    Navigate(NavigationTarget),
     Quit,
 }
 pub struct Navigator {
@@ -92,8 +91,11 @@ impl Navigator {
         self.status = text.into();
         self.dirty = true;
     }
-    pub fn location(&mut self, url: &Url) {
-        self.address.set_url(url);
+    pub fn location(&mut self, target: &NavigationTarget) {
+        match target {
+            NavigationTarget::Web(url) => self.address.set_url(url),
+            NavigationTarget::Demo(demo) => self.address.set_demo(*demo),
+        }
         self.dirty = true;
     }
     fn field_width(&self) -> usize {
@@ -130,7 +132,7 @@ impl Navigator {
         write!(out, "{status}")?;
         queue!(out, MoveTo(0, 3), Clear(ClearType::CurrentLine))?;
         let help: String =
-            "Enter: go  Tab: protocol  F2: toggle  Ctrl-L: address  Esc: Shell2  Ctrl-Q: quit"
+            "Enter: go  demo1-3: built-ins  Tab: protocol  F2: toggle  Ctrl-L: address  Esc: Shell2  Ctrl-Q: quit"
                 .chars()
                 .take(self.columns as usize)
                 .collect();
@@ -209,10 +211,10 @@ impl Navigator {
                             self.protocol_focus = !self.protocol_focus
                         }
                         KeyCode::F(2) => self.address.toggle(),
-                        KeyCode::Enter if !self.protocol_focus => match self.address.url() {
-                            Ok(url) => {
-                                self.location(&url);
-                                action = Some(Action::Navigate(url));
+                        KeyCode::Enter if !self.protocol_focus => match self.address.target() {
+                            Ok(target) => {
+                                self.location(&target);
+                                action = Some(Action::Navigate(target));
                                 break;
                             }
                             Err(error) => self.status(error),

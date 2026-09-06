@@ -3,6 +3,7 @@ use crate::native_images::{Images, Resources};
 use rust_qjs_dom::DomEngine;
 use solara::{
     native_paint::{PageMesh, Painter},
+    navigation::{BuiltInDemo, NavigationTarget},
     spec_layout::{SpecLayout, Viewport},
 };
 use std::sync::Arc;
@@ -31,6 +32,7 @@ const DEMOS: [(&str, &str); 4] = [
 const BACKGROUND: u32 = u32::from_le_bytes([13, 18, 27, 255]);
 const INK: u32 = u32::from_le_bytes([229, 237, 248, 255]);
 const CONTOUR: u32 = u32::from_le_bytes([65, 151, 174, 255]);
+const BROWSER_CADENCE_MS: u64 = 250;
 
 struct Window {
     resources: Arc<Resources>,
@@ -540,6 +542,23 @@ impl Window {
     }
 }
 
+fn built_in_demo(demo: BuiltInDemo) -> (&'static str, &'static str) {
+    match demo {
+        BuiltInDemo::TextAndBorders => (
+            "trueos://solara/docs/TextAndBorders.html",
+            include_str!("../docs/TextAndBorders.html"),
+        ),
+        BuiltInDemo::DivsAndPanels => (
+            "trueos://solara/docs/DivsAndPanels.html",
+            include_str!("../docs/DivsAndPanels.html"),
+        ),
+        BuiltInDemo::FlowAndForms => (
+            "trueos://solara/docs/FlowAndForms.html",
+            include_str!("../docs/FlowAndForms.html"),
+        ),
+    }
+}
+
 pub(crate) fn run_browser() -> Result<(), String> {
     use crate::native_tui::{Action, Navigator};
     use std::{
@@ -586,7 +605,7 @@ pub(crate) fn run_browser() -> Result<(), String> {
             }
             None
         } else {
-            Some(r.url)
+            Some(NavigationTarget::Web(r.url))
         }
     });
     loop {
@@ -596,15 +615,39 @@ pub(crate) fn run_browser() -> Result<(), String> {
             Some(Action::Navigate(url)) => requested = Some(url),
             None => {}
         }
-        if let Some(url) = requested.take() {
-            navigator.location(&url);
-            navigator.status(format!("Loading {url}"));
+        if let Some(target) = requested.take() {
+            navigator.location(&target);
+            navigator.status(format!("Loading {target}"));
             styling = None;
-            // Replacing the future discards the previous kernel operation.
-            fetching = Some((
-                url.clone(),
-                Box::pin(crate::native_images::fetch_bytes(url.into())),
-            ));
+            match target {
+                // Replacing the future discards the previous kernel operation.
+                NavigationTarget::Web(url) => {
+                    fetching = Some((
+                        url.clone(),
+                        Box::pin(crate::native_images::fetch_bytes(url.into())),
+                    ));
+                }
+                NavigationTarget::Demo(demo) => {
+                    fetching = None;
+                    let (url, html) = built_in_demo(demo);
+                    match page_layout(
+                        &mut engine,
+                        url,
+                        html,
+                        window.frame.width(),
+                        window.frame.height(),
+                    ) {
+                        Ok((layout, resources)) => {
+                            styling = Some((
+                                url::Url::parse(url).expect("built-in demo URLs are valid"),
+                                layout,
+                                resources,
+                            ));
+                        }
+                        Err(error) => navigator.status(format!("Could not open {demo}: {error}")),
+                    }
+                }
+            }
         }
         if let Some((_, future)) = &mut fetching
             && let Poll::Ready(result) = future
@@ -646,7 +689,6 @@ pub(crate) fn run_browser() -> Result<(), String> {
                 let (url, layout, resources) = styling.take().expect("resolved page");
                 match window.navigate(layout, resources) {
                     Ok(()) => {
-                        navigator.location(&url);
                         navigator.status(format!("Loaded {url}"));
                         crate::parser_probe::report_info(format_args!(
                             "solara: navigation-loaded window={} url={url}",
@@ -673,6 +715,6 @@ pub(crate) fn run_browser() -> Result<(), String> {
             ));
             window.failed = true;
         }
-        trueos::vsys::sleep_ms(16);
+        trueos::vsys::sleep_ms(BROWSER_CADENCE_MS);
     }
 }

@@ -1,6 +1,46 @@
 //! Minimal address editor. The terminal adapter owns focus and key bindings.
 use url::Url;
 
+/// A page target selected from the navigator's address field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NavigationTarget {
+    Web(Url),
+    Demo(BuiltInDemo),
+}
+
+impl std::fmt::Display for NavigationTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Web(url) => url.fmt(f),
+            Self::Demo(demo) => demo.fmt(f),
+        }
+    }
+}
+
+/// The bounded corpus available in the single Solara browser tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltInDemo {
+    TextAndBorders,
+    DivsAndPanels,
+    FlowAndForms,
+}
+
+impl BuiltInDemo {
+    pub const fn address(self) -> &'static str {
+        match self {
+            Self::TextAndBorders => "demo1",
+            Self::DivsAndPanels => "demo2",
+            Self::FlowAndForms => "demo3",
+        }
+    }
+}
+
+impl std::fmt::Display for BuiltInDemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.address())
+    }
+}
+
 #[derive(Default)]
 pub struct Address {
     pub text: String,
@@ -74,6 +114,23 @@ impl Address {
         self.right();
         self.text.replace_range(start..self.cursor, "");
         self.cursor = start;
+    }
+    pub fn target(&self) -> Result<NavigationTarget, String> {
+        let demo = match self.text.trim().to_ascii_lowercase().as_str() {
+            "demo1" => Some(BuiltInDemo::TextAndBorders),
+            "demo2" => Some(BuiltInDemo::DivsAndPanels),
+            "demo3" => Some(BuiltInDemo::FlowAndForms),
+            _ => None,
+        };
+        Ok(match demo {
+            Some(demo) => NavigationTarget::Demo(demo),
+            None => NavigationTarget::Web(self.url()?),
+        })
+    }
+    pub fn set_demo(&mut self, demo: BuiltInDemo) {
+        self.text = demo.address().into();
+        self.cursor = self.text.len();
+        self.selected = false;
     }
     pub fn url(&self) -> Result<Url, String> {
         let text = self.text.trim();
@@ -150,5 +207,21 @@ mod tests {
         assert_eq!(a.text, "file:///tmp/a");
         a.insert("a b");
         assert!(a.url().is_err());
+    }
+    #[test]
+    fn recognizes_the_three_single_tab_builtins() {
+        let mut a = Address::default();
+        for (address, expected) in [
+            ("demo1", BuiltInDemo::TextAndBorders),
+            ("DEMO2", BuiltInDemo::DivsAndPanels),
+            (" demo3 ", BuiltInDemo::FlowAndForms),
+        ] {
+            a.select_all();
+            a.insert(address);
+            assert_eq!(a.target().unwrap(), NavigationTarget::Demo(expected));
+        }
+        a.set_demo(BuiltInDemo::TextAndBorders);
+        assert_eq!(a.text, "demo1");
+        assert_eq!(a.cursor, 5);
     }
 }
