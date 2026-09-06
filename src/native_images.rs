@@ -17,6 +17,7 @@ use trueos::{
 
 #[derive(Default)]
 pub(crate) struct Resources {
+    pub favicon: Option<(String, Vec<String>)>,
     queued: Mutex<VecDeque<String>>,
     seen: Mutex<BTreeSet<String>>,
     requests: Mutex<VecDeque<(String, Box<dyn NetHandler>)>>,

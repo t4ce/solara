@@ -24,7 +24,6 @@ pub enum Action {
 }
 pub struct Navigator {
     address: Address,
-    protocol_focus: bool,
     status: String,
     columns: u16,
     dirty: bool,
@@ -40,7 +39,6 @@ impl Navigator {
         let lease = trueos::vshell::terminal_initial_lease().map_err(io_error)?;
         let mut ui = Self {
             address: Address::default(),
-            protocol_focus: false,
             status: "Opening home…".into(),
             columns: 80,
             dirty: true,
@@ -109,7 +107,7 @@ impl Navigator {
         let cursor = self.address.text[..self.address.cursor].chars().count();
         let start = cursor.saturating_sub(width.saturating_sub(1));
         let text: String = self.address.text.chars().skip(start).take(width).collect();
-        let selected = self.address.selected && !self.protocol_focus;
+        let selected = self.address.selected;
         let protocol = if self.address.http { "HTTP " } else { "HTTPS" };
         let mut out = io::BufWriter::new(io::stdout());
         queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
@@ -117,10 +115,9 @@ impl Navigator {
         queue!(out, MoveTo(0, 1), Clear(ClearType::CurrentLine))?;
         write!(
             out,
-            "URL [{}{:width$}\x1b[0m] {}[{protocol}]\x1b[0m",
+            "[{protocol}] URL [{}{:width$}\x1b[0m]",
             if selected { "\x1b[7m" } else { "" },
-            text,
-            if self.protocol_focus { "\x1b[7m" } else { "" }
+            text
         )?;
         queue!(out, MoveTo(0, 2), Clear(ClearType::CurrentLine))?;
         let status: String = self
@@ -132,16 +129,12 @@ impl Navigator {
         write!(out, "{status}")?;
         queue!(out, MoveTo(0, 3), Clear(ClearType::CurrentLine))?;
         let help: String =
-            "Enter: go  demo1-3: built-ins  Tab: protocol  F2: toggle  Ctrl-L: address  Esc: Shell2  Ctrl-Q: quit"
+            "Enter: go  demo1-3: built-ins  F2: toggle  Ctrl-L: address  Esc: Shell2  Ctrl-Q: quit"
                 .chars()
                 .take(self.columns as usize)
                 .collect();
         write!(out, "{help}")?;
-        let x = if self.protocol_focus {
-            width + 8
-        } else {
-            5 + cursor - start
-        };
+        let x = 13 + cursor - start;
         queue!(
             out,
             MoveTo((x as u16).min(self.columns.saturating_sub(1)), 1),
@@ -174,14 +167,12 @@ impl Navigator {
                 }
                 Event::Paste(text) => {
                     self.address.insert(text.trim());
-                    self.protocol_focus = false;
                     self.dirty = true;
                 }
                 Event::Mouse(mouse)
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && mouse.row == 1 =>
                 {
-                    self.protocol_focus = mouse.column as usize >= self.field_width() + 7;
-                    if self.protocol_focus {
+                    if mouse.column < 7 {
                         self.address.toggle();
                     } else {
                         self.address.cursor = self.address.text.len();
@@ -204,14 +195,10 @@ impl Navigator {
                             return Ok(None);
                         }
                         KeyCode::Char('l') if ctrl => {
-                            self.protocol_focus = false;
                             self.address.select_all();
                         }
-                        KeyCode::Tab | KeyCode::BackTab => {
-                            self.protocol_focus = !self.protocol_focus
-                        }
                         KeyCode::F(2) => self.address.toggle(),
-                        KeyCode::Enter if !self.protocol_focus => match self.address.target() {
+                        KeyCode::Enter => match self.address.target() {
                             Ok(target) => {
                                 self.location(&target);
                                 action = Some(Action::Navigate(target));
@@ -219,26 +206,19 @@ impl Navigator {
                             }
                             Err(error) => self.status(error),
                         },
-                        KeyCode::Enter | KeyCode::Char(' ') if self.protocol_focus => {
-                            self.address.toggle()
-                        }
-                        KeyCode::Left if !self.protocol_focus => self.address.left(),
-                        KeyCode::Right if !self.protocol_focus => self.address.right(),
-                        KeyCode::Home if !self.protocol_focus => {
+                        KeyCode::Left => self.address.left(),
+                        KeyCode::Right => self.address.right(),
+                        KeyCode::Home => {
                             self.address.cursor = 0;
                             self.address.selected = false;
                         }
-                        KeyCode::End if !self.protocol_focus => {
+                        KeyCode::End => {
                             self.address.cursor = self.address.text.len();
                             self.address.selected = false;
                         }
-                        KeyCode::Backspace if !self.protocol_focus => self.address.backspace(),
-                        KeyCode::Delete if !self.protocol_focus => self.address.delete(),
-                        KeyCode::Char(c)
-                            if !self.protocol_focus
-                                && !ctrl
-                                && !key.modifiers.contains(KeyModifiers::ALT) =>
-                        {
+                        KeyCode::Backspace => self.address.backspace(),
+                        KeyCode::Delete => self.address.delete(),
+                        KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
                             self.address.insert(&c.to_string())
                         }
                         _ => {}

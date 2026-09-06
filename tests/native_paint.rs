@@ -349,3 +349,81 @@ fn button_hover_uses_css_cascade_and_retained_glyphs() {
     layout.resolve(0.0).unwrap();
     assert_eq!(border(&layout, "below"), "rgb(65, 151, 174)");
 }
+
+#[test]
+fn disclosures_collapse_reflow_and_activate_after_scrolling() {
+    let mut layout = document(
+        r#"<style>body{margin:0} summary{min-height:30px} p{height:80px}</style>
+        <details id="root" open><summary id="root-label">disc001 <button id="upload" type="button"><span>upload</span></button></summary>
+        <div><details id="folder"><summary id="folder-label"><b>apps</b></summary>
+        <p>Hidden folder contents</p><summary id="second">Extra summary is ordinary content</summary></details></div></details>
+        <div style="height:800px"></div><details id="below"><summary id="below-label">Scrolled folder</summary><p>Below</p></details>"#,
+    );
+    let id = |layout: &SpecLayout, name| layout.document().get_element_by_id(name).unwrap();
+    let open = |layout: &SpecLayout, name| {
+        layout
+            .document()
+            .get_node(id(layout, name))
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .attr(blitz_dom::local_name!("open"))
+            .is_some()
+    };
+    let point = |layout: &SpecLayout, name, scroll| {
+        let rect = layout
+            .document()
+            .get_client_bounding_rect(id(layout, name))
+            .unwrap();
+        [rect.x as f32 + 6.0, rect.y as f32 + 10.0 - scroll]
+    };
+    let click = |layout: &mut SpecLayout, p, scroll| {
+        assert!(!layout.pointer_button(Some(p), scroll, true));
+        let changed = layout.pointer_button(Some(p), scroll, false);
+        layout.resolve(0.0).unwrap();
+        changed
+    };
+    let mut painter = Painter::default();
+    let closed = painter.paint(layout.document()).unwrap();
+    assert!(!open(&layout, "folder"));
+    let p = point(&layout, "upload", 0.0);
+    assert!(!click(&mut layout, p, 0.0));
+    assert!(open(&layout, "root"));
+    let p = point(&layout, "folder-label", 0.0);
+    assert!(click(&mut layout, p, 0.0));
+    assert!(open(&layout, "folder"));
+    let expanded = painter.paint(layout.document()).unwrap();
+    assert!(expanded.glyphs > closed.glyphs);
+    assert!(expanded.height > closed.height);
+    let p = point(&layout, "second", 0.0);
+    assert!(!click(&mut layout, p, 0.0));
+    let p = point(&layout, "folder-label", 0.0);
+    assert!(click(&mut layout, p, 0.0));
+    let collapsed = painter.paint(layout.document()).unwrap();
+    assert_eq!(closed.glyphs, collapsed.glyphs);
+    assert_eq!(closed.height, collapsed.height);
+    let p = point(&layout, "below-label", 800.0);
+    assert!(click(&mut layout, p, 800.0));
+    assert!(open(&layout, "below"));
+    // Release alone and losing the pointer route must not activate anything.
+    assert!(!layout.pointer_button(Some(p), 800.0, false));
+    layout.pointer_button(Some(p), 800.0, true);
+    layout.pointer_button(None, 800.0, true);
+    assert!(!layout.pointer_button(Some(p), 800.0, false));
+    // The actual shaped disclosure marker must have a font glyph, not .notdef.
+    let summary = layout
+        .document()
+        .get_node(id(&layout, "below-label"))
+        .unwrap();
+    let text = summary
+        .element_data()
+        .unwrap()
+        .inline_layout_data
+        .as_ref()
+        .unwrap();
+    let first = text.layout.lines().next().unwrap().items().next().unwrap();
+    let parley::PositionedLayoutItem::GlyphRun(run) = first else {
+        panic!("missing disclosure glyph")
+    };
+    assert_ne!(run.positioned_glyphs().next().unwrap().id, 0);
+}

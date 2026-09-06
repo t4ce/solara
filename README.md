@@ -28,8 +28,7 @@ finish the superseded transport in the background.
 
 A minimal terminal navigator uses the same terminal lease and Crossterm backend
 as Texplo. Type an address and press **Enter**. The **HTTP/HTTPS** toggle sits to
-its right: **Tab** focuses it and **Space/Enter** changes it, or **F2** toggles
-from either field. Bare addresses use the selected protocol (HTTPS initially);
+the left of the address: **F2** or a click switches it. Bare addresses use the selected protocol (HTTPS initially);
 a pasted full URL supplies its own protocol. **Ctrl-L** selects the address.
 **Esc** parks the navigator in Shell2 while the page stays alive; **vmx_tui**
 reopens it. **Ctrl-Q** closes this Solara instance.
@@ -47,6 +46,15 @@ add link activation, history, additional tabs, or browser JavaScript APIs.
 The page fetch currently accepts UTF-8 HTML up to 16 MiB; the ABI does not expose
 a redirect's final URL, so relative resources use the requested page URL.
 Legacy `open URL` plus `source PATH` launch scripts remain readable.
+
+Use `http://localhost/` to visit the kernel's TRUEOSFS page. The kernel now emits
+folder disclosures, download links and buttons in its initial HTML; folders
+start closed while each mounted root starts open. A primary click on the first
+`summary` toggles `open` and reflows the retained document, including after
+scrolling. Buttons within a summary retain their own activation boundary.
+Blitz's bundled bullet font supplies the disclosure triangles as glyph meshes.
+Filesystem action scripts and the WebSocket clock still require browser script
+integration; the controls currently provide native hover feedback in Solara.
 
 ## Current boundary
 

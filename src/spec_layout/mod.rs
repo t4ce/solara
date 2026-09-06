@@ -14,6 +14,7 @@ pub use blitz_traits::shell::Viewport;
 use parley::{FontContext, PositionedLayoutItem};
 use rust_qjs_dom::{DomArtifact, DomNode};
 
+mod disclosure;
 mod import;
 
 /// Own this alongside the page runtime; resizing and mutations reuse its nodes,
@@ -23,6 +24,7 @@ pub struct SpecLayout {
     source_url: url::Url,
     source_nodes: BTreeMap<String, NodeId>,
     generation: u64,
+    pressed_summary: Option<(NodeId, [f32; 2])>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -87,6 +89,7 @@ impl SpecLayout {
             source_url,
             source_nodes,
             generation: 0,
+            pressed_summary: None,
         })
     }
 
@@ -234,6 +237,9 @@ pub fn bundled_font_context() -> FontContext {
             system_fonts: false,
         }),
     };
+    context
+        .collection
+        .register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
     let bytes: &'static [u8] = include_bytes!("../../assets/fonts/Inconsolata-Regular.ttf");
     let families = context
         .collection

@@ -7,7 +7,7 @@ use solara::{
     spec_layout::{SpecLayout, Viewport},
 };
 use std::sync::Arc;
-use trueos::ui4_scene::{Damage, Error as UiError, Frame, ResizeEvent};
+use trueos::ui4_scene::{Damage, Error as UiError, Frame, ResizeEvent, MenuEntry};
 use trueos::vgpu::{self, Buffer, Device, Queue, QueueClass, RenderPipeline, ShaderModule};
 
 #[cfg(feature = "native-demos")]
@@ -33,7 +33,26 @@ const BACKGROUND: u32 = u32::from_le_bytes([13, 18, 27, 255]);
 const INK: u32 = u32::from_le_bytes([229, 237, 248, 255]);
 const BROWSER_CADENCE_MS: u64 = 250;
 
+#[derive(Default)]
+struct MenuState { zoom_delta: i32, collapse: bool }
+fn menu_entries() -> [MenuEntry<'static, MenuState>; 3] {
+    [MenuEntry::new("+", |s| s.zoom_delta += 10),
+     MenuEntry::new("-", |s| s.zoom_delta -= 10),
+     MenuEntry::new("collapse", |s| s.collapse = true)]
+}
+#[derive(Clone, Copy)]
+struct Expanded { x: i32, y: i32, width: u32, height: u32 }
+struct Swoop { started: u64, from: (i32, i32), to: (i32, i32) }
+
 struct Window {
+    menu: MenuState,
+    zoom_percent: i32,
+    needs_reflow: bool,
+    expanded: Option<Expanded>,
+    swoop: Option<Swoop>,
+    collapsed_selected: bool,
+    icon_press: Option<(u32, u32)>,
+    favicon: crate::native_favicon::Favicon,
     resources: Arc<Resources>,
     images: Images,
     image_shader: ShaderModule,
@@ -111,7 +130,8 @@ impl Window {
         if !layout.resolve(0.0)? {
             return Err(Error::Other("stylesheets still pending".into()));
         }
-        let frame = Frame::open_streaming(x, y, width, height)?;
+        let mut frame = Frame::open_streaming(x, y, width, height)?;
+        frame.register_context_menu(&menu_entries())?;
         let device = Device::open(vgpu::Capabilities::DEFAULT.union(vgpu::Capabilities::PRESENT))?;
         let queue = device.create_queue(QueueClass::Render)?;
         let shader = device
@@ -133,7 +153,11 @@ impl Window {
         }
         let mut painter = Painter::default();
         let mesh = painter.paint(layout.document())?;
+        let mut favicon = crate::native_favicon::Favicon::default();
+        favicon.navigate(resources.favicon.clone());
         Ok(Self {
+            menu: MenuState::default(), zoom_percent: 100, needs_reflow: false,
+            expanded: None, swoop: None, collapsed_selected: true, icon_press: None, favicon,
             resources,
             images: Images::default(),
             image_shader,
@@ -159,8 +183,91 @@ impl Window {
             failed: false,
         })
     }
+    fn zoom(&self) -> f32 { self.zoom_percent as f32 / 100.0 }
+    fn document_size(&self) -> (u32, u32) {
+        self.expanded.map(|e| (e.width, e.height)).unwrap_or((self.frame.width(), self.frame.height()))
+    }
+    fn viewport(&self) -> Viewport {
+        Viewport { window_size: self.document_size(), zoom: self.zoom(), ..Default::default() }
+    }
+    fn collapse(&mut self) -> Result<(), Error> {
+        let (x, y) = self.frame.position()?;
+        let expanded = Expanded { x, y, width: self.frame.width(), height: self.frame.height() };
+        self.frame.resize(64, 64)?;
+        self.expanded = Some(expanded);
+        self.collapsed_selected = self.frame.input_routes()?.iter().any(|r| r.selected_for_window);
+        self.swoop = Some(Swoop { started: trueos::clock::monotonic_millis(), from: (x,y), to: (x, y.saturating_add(expanded.height.saturating_sub(64) as i32)) });
+        self.icon_press = None;
+        self.dirty = true;
+        Ok(())
+    }
+    fn expand(&mut self) -> Result<(), Error> {
+        let Some(saved) = self.expanded else { return Ok(()); };
+        self.frame.resize(saved.width, saved.height)?;
+        self.frame.set_position(saved.x, saved.y)?;
+        self.expanded = None;
+        self.swoop = None;
+        self.icon_press = None;
+        self.dirty = true;
+        self.uploaded = false;
+        self.needs_reflow = true;
+        Ok(())
+    }
+    fn tick_collapsed(&mut self) -> Result<(), Error> {
+        if let Some(swoop) = &self.swoop {
+            let t = (trueos::clock::monotonic_millis().saturating_sub(swoop.started) as f32 / 180.0).min(1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            self.frame.set_position(
+                (swoop.from.0 as f32 + (swoop.to.0 - swoop.from.0) as f32 * eased).round() as i32,
+                (swoop.from.1 as f32 + (swoop.to.1 - swoop.from.1) as f32 * eased).round() as i32,
+            )?;
+            if t >= 1.0 { self.swoop = None; }
+        }
+        let selected = self.frame.input_routes()?.iter().any(|r| r.selected_for_window);
+        let mut restore = selected && !self.collapsed_selected;
+        self.collapsed_selected = selected;
+        while let Some(event) = self.frame.take_pointer_event()? {
+            if event.buttons_pressed & 1 != 0 { self.icon_press = Some((event.x, event.y)); }
+            if let Some((x,y)) = self.icon_press {
+                if event.x.abs_diff(x) > 4 || event.y.abs_diff(y) > 4 { self.icon_press = None; }
+            }
+            if event.buttons_released & 1 != 0 { restore |= self.icon_press.take().is_some(); }
+        }
+        while self.frame.take_resize_event()?.is_some() {}
+        while self.frame.take_pan_event()?.is_some() {}
+        if restore { return self.expand(); }
+        if self.dirty {
+            self.frame.begin(BACKGROUND)?;
+            self.frame.write_opaque_rgba8(&self.favicon.pixels)?;
+            self.frame.publish(Damage::full(64,64))?;
+            self.dirty = false;
+        }
+        Ok(())
+    }
     fn tick(&mut self) -> Result<(), Error> {
         let started = trueos::clock::Instant::now();
+        self.frame.pump_context_menu(&menu_entries(), &mut self.menu)?;
+        let zoom_delta = core::mem::take(&mut self.menu.zoom_delta);
+        if zoom_delta != 0 {
+            self.zoom_percent = (self.zoom_percent + zoom_delta).clamp(10, 500);
+            self.needs_reflow = true;
+        }
+        if self.menu.collapse && self.expanded.is_none() { self.collapse()?; }
+        self.menu.collapse = false;
+        let icon_changed = self.favicon.poll();
+        if self.expanded.is_some() {
+            self.dirty |= icon_changed;
+            self.tick_collapsed()?;
+            return Ok(());
+        }
+        if self.needs_reflow {
+            self.layout.set_viewport(self.viewport())?;
+            if !self.layout.resolve(0.0)? { return Ok(()); }
+            self.mesh = self.painter.paint(self.layout.document())?;
+            self.needs_reflow = false;
+            self.dirty = true;
+            self.uploaded = false;
+        }
         let resources_changed = self.resources.poll()?;
         if self
             .images
@@ -182,6 +289,7 @@ impl Window {
             self.resize = None;
             self.layout.set_viewport(Viewport {
                 window_size: (event.width, event.height),
+                zoom: self.zoom(),
                 ..Default::default()
             })?;
             if !self.layout.resolve(0.0)? {
@@ -193,16 +301,32 @@ impl Window {
         }
         let previous = self.scroll_y;
         let previous_pointer = self.pointer;
+        let mut disclosure_changed = false;
         while let Some(event) = self.frame.take_pointer_event()? {
             self.scroll_y -= event.wheel as f32 * 48.0;
-            self.pointer = Some((event.source, [event.local_x as f32, event.local_y as f32]));
+            let point = [event.local_x as f32 / self.zoom(), event.local_y as f32 / self.zoom()];
+            if self
+                .pointer
+                .is_some_and(|(source, _)| source != event.source)
+            {
+                self.layout.pointer_button(None, self.scroll_y, true);
+            }
+            self.pointer = Some((event.source, point));
+            if event.buttons_pressed & 1 != 0 {
+                self.layout.pointer_button(Some(point), self.scroll_y, true);
+            }
+            if event.buttons_released & 1 != 0 {
+                disclosure_changed |= self
+                    .layout
+                    .pointer_button(Some(point), self.scroll_y, false);
+            }
         }
         while let Some(event) = self.frame.take_pan_event()? {
-            self.scroll_y -= event.dy as f32;
+            self.scroll_y -= event.dy as f32 / self.zoom();
         }
         self.scroll_y = self.scroll_y.clamp(
             0.0,
-            (self.mesh.height - self.frame.height() as f32).max(0.0),
+            (self.mesh.height - self.frame.height() as f32 / self.zoom()).max(0.0),
         );
         if self.scroll_y != previous {
             self.dirty = true;
@@ -218,6 +342,15 @@ impl Window {
                 .any(|route| route.cursor == source && route.selected_for_window)
         {
             self.pointer = None;
+            self.layout.pointer_button(None, self.scroll_y, true);
+        }
+        if disclosure_changed && self.layout.resolve(0.0)? {
+            self.mesh = self.painter.paint(self.layout.document())?;
+            self.scroll_y = self
+                .scroll_y
+                .min((self.mesh.height - self.frame.height() as f32 / self.zoom()).max(0.0));
+            self.dirty = true;
+            self.uploaded = false;
         }
         if (self.dirty || self.pointer != previous_pointer)
             && self
@@ -290,8 +423,8 @@ impl Window {
         Ok(())
     }
     fn draw_images(&mut self) -> Result<usize, Error> {
-        let w = self.frame.width() as f32;
-        let h = self.frame.height() as f32;
+        let w = self.frame.width() as f32 / self.zoom();
+        let h = self.frame.height() as f32 / self.zoom();
         let mut count = 0;
         for image in &self.mesh.images {
             if !image.visible(w, h, self.scroll_y) {
@@ -339,8 +472,8 @@ impl Window {
         Ok(count)
     }
     fn upload(&mut self) -> Result<(), Error> {
-        let w = self.frame.width() as f32;
-        let h = self.frame.height() as f32;
+        let w = self.frame.width() as f32 / self.zoom();
+        let h = self.frame.height() as f32 / self.zoom();
         let visible = self.mesh.viewport(w, h, self.scroll_y);
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -549,7 +682,14 @@ fn page_layout(
     height: u32,
 ) -> Result<(SpecLayout, Arc<Resources>), String> {
     let artifact = engine.parse(html, url).map_err(|e| e.to_string())?;
-    let resources = Arc::new(Resources::default());
+    let favicon = url::Url::parse(url).ok().and_then(|page| {
+        let origin = solara::favicon::origin(&page)?;
+        let base = artifact.asset_index.base_href.as_deref().and_then(|href| page.join(href).ok()).unwrap_or(page);
+        Some((origin, solara::favicon::candidates(&base, &artifact.document)))
+    });
+    let mut resources = Resources::default();
+    resources.favicon = favicon;
+    let resources = Arc::new(resources);
     let layout = SpecLayout::from_artifact(
         &artifact,
         solara::spec_layout::DocumentConfig {
@@ -569,6 +709,8 @@ impl Window {
     fn navigate(&mut self, layout: SpecLayout, resources: Arc<Resources>) -> Result<(), String> {
         let mesh = self.painter.paint(layout.document())?;
         self.images.release(self.device);
+        self.favicon.navigate(resources.favicon.clone());
+        self.needs_reflow = true;
         self.layout = layout;
         self.resources = resources;
         self.mesh = mesh;
@@ -672,8 +814,8 @@ pub(crate) fn run_browser() -> Result<(), String> {
                         &mut engine,
                         url,
                         html,
-                        window.frame.width(),
-                        window.frame.height(),
+                        window.document_size().0,
+                        window.document_size().1,
                     ) {
                         Ok((layout, resources)) => {
                             styling = Some((
@@ -702,8 +844,8 @@ pub(crate) fn run_browser() -> Result<(), String> {
                         &mut engine,
                         url.as_str(),
                         &html,
-                        window.frame.width(),
-                        window.frame.height(),
+                        window.document_size().0,
+                        window.document_size().1,
                     )
                 }) {
                 Ok((layout, resources)) => {
@@ -717,8 +859,7 @@ pub(crate) fn run_browser() -> Result<(), String> {
             resources.poll()?;
             // Resizes during the fetch must be reflected in the arriving page.
             layout.set_viewport(Viewport {
-                window_size: (window.frame.width(), window.frame.height()),
-                ..Default::default()
+                ..window.viewport()
             })?;
             layout.resolve(0.0)
         });
@@ -753,6 +894,6 @@ pub(crate) fn run_browser() -> Result<(), String> {
             ));
             window.failed = true;
         }
-        trueos::vsys::sleep_ms(BROWSER_CADENCE_MS);
+        trueos::vsys::sleep_ms(if window.swoop.is_some() { 16 } else { BROWSER_CADENCE_MS });
     }
 }
