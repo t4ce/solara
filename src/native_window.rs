@@ -555,8 +555,8 @@ pub(crate) fn run_browser() -> Result<(), String> {
     let (output_w, output_h) =
         trueos::ui4_scene::output_dimensions().map_err(|e| format!("output: {e:?}"))?;
     let (width, height) = (
-        output_w.saturating_sub(80).max(320),
-        output_h.saturating_sub(100).max(240),
+        output_w.saturating_sub(80).clamp(320, 800),
+        output_h.saturating_sub(100).clamp(240, 512),
     );
     let (layout, resources) = page_layout(
         &mut engine,

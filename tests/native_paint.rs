@@ -13,6 +13,9 @@ impl blitz_traits::net::NetProvider for Resources {
         req: blitz_traits::net::Request,
         handler: Box<dyn blitz_traits::net::NetHandler>,
     ) {
+        if solara::native_paint::jpeg_url(&req.url) {
+            return; // Tests deliver decoded images through SpecLayout::load_image.
+        }
         let css = match req.url.path().rsplit('/').next().unwrap_or("") {
             "TextAndBorders.css" => include_str!("../docs/TextAndBorders.css"),
             "demoui.css" => include_str!("../docs/demoui.css"),
@@ -254,4 +257,39 @@ fn decoded_images_reflow_and_crop_without_rebuilding_glyphs_on_scroll() {
     assert!(!contain.visible(400.0, 300.0, 0.0));
     assert!(contain.visible(400.0, 300.0, 800.0));
     assert_eq!(contain.uv, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+}
+
+#[test]
+fn homepage_keeps_the_complete_logo_centered_across_window_sizes() {
+    let mut layout = document(include_str!("../docs/home.html"));
+    layout.load_image(
+        "trueos://solara/assets/logo.jpg".into(),
+        640,
+        360,
+        std::sync::Arc::new(vec![255; 640 * 360 * 4]),
+    );
+    for (width, height) in [(800, 512), (480, 320), (2480, 1340)] {
+        layout
+            .set_viewport(Viewport {
+                window_size: (width, height),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(layout.resolve(0.0).unwrap());
+        let mesh = Painter::default().paint(layout.document()).unwrap();
+        assert_eq!(mesh.images.len(), 1);
+        let image = &mesh.images[0];
+        assert_eq!(image.uv, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        let [left, top] = image.corners[0];
+        let [right, bottom] = image.corners[2];
+        assert!((left + right - width as f32).abs() <= 1.0);
+        assert!(
+            (top + bottom - height as f32).abs() <= 1.0,
+            "viewport={width}x{height} corners={:?}",
+            image.corners
+        );
+        assert!(left >= 0.0 && top >= 0.0);
+        assert!(right <= width as f32 && bottom <= height as f32);
+        assert!(((right - left) / (bottom - top) - 640.0 / 360.0).abs() < 0.001);
+    }
 }

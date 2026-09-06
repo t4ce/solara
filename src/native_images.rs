@@ -192,6 +192,27 @@ impl Images {
             match result {
                 Ok(decoded) => {
                     let info = decoded.info;
+                    // Sample the decoded buffer before upload so a partial decode
+                    // can be distinguished from a texture/rendering failure.
+                    let pixel = |y: u32| {
+                        let offset =
+                            y as usize * info.stride_bytes as usize + info.width as usize / 2 * 4;
+                        decoded.rgba.get(offset..offset + 4).unwrap_or(&[])
+                    };
+                    let _ = trueos::logl::log_record(
+                        trueos::logl::level::DEBUG,
+                        "blueprint",
+                        format_args!(
+                            "solara: image-decoded url={} size={}x{} backend={:?} center_rgba_top={:?} center_rgba_middle={:?} center_rgba_bottom={:?}",
+                            pending.url,
+                            info.width,
+                            info.height,
+                            info.backend,
+                            pixel(0),
+                            pixel(info.height / 2),
+                            pixel(info.height.saturating_sub(1))
+                        ),
+                    );
                     let buffer = match device
                         .create_buffer(decoded.rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)
                     {

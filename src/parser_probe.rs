@@ -254,7 +254,7 @@ fn monotonic_nanos() -> u64 {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub(crate) fn report_info(arguments: fmt::Arguments<'_>) {
-    trueos::logl::log(trueos::logl::level::INFO, arguments);
+    let _ = trueos::logl::log_record(trueos::logl::level::INFO, "blueprint", arguments);
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -264,7 +264,7 @@ pub(crate) fn report_info(arguments: fmt::Arguments<'_>) {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub(crate) fn report_error(arguments: fmt::Arguments<'_>) {
-    trueos::logl::log(trueos::logl::level::ERROR, arguments);
+    let _ = trueos::logl::log_record(trueos::logl::level::ERROR, "blueprint", arguments);
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]

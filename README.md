@@ -18,7 +18,8 @@ or a plan to reproduce every Chrome/Firefox feature.
 > scripts, modules, import maps, and data scripts remain inert.
 
 `surf` opens a single Solara tab with the bundled [`docs/home.html`](docs/home.html)
-logo page. `surf <url>` starts that tab at an HTTP(S) address. Shell2 only launches
+logo page in an initially 800×512 UI4 window (smaller on small displays).
+The window remains resizable. `surf <url>` starts that tab at an HTTP(S) address. Shell2 only launches
 Solara; the running Blueprint owns subsequent requests and document replacement.
 One VMX context, one retained QuickJS runtime and one UI4 window stay alive across
 navigation. Submitting another address discards the previous pending result and
