@@ -69,3 +69,18 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"
 
 [workspace]
 resolver = "3"
+
+# Keep the full Stylo family on one source identity across Blitz and Solara.
+# TRUEOS adaptation is maintained in the fork, on the 0.20.0 release base.
+[patch.crates-io]
+stylo = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_atoms = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_dom = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_malloc_size_of = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_static_prefs = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_traits = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+stylo_derive = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+selectors = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+servo_arc = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+to_shmem = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }
+to_shmem_derive = { git = "https://github.com/t4ce/stylo", rev = "3786da941f0042c923fb5981a0edda86b8d38dba" }

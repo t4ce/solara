@@ -78,13 +78,23 @@ and quirks-mode compatibility is not claimed.
 
 - Blitz DOM/traits: `a50cb8971a03fb4cac697b763f8f5d01ee83cefb`
   (`0.3.0-beta.2`, upstream workspace).
-- Stylo: `0.20.0`, via Blitz.
+- Stylo: `0.20.0`, via Blitz, patched to
+  [`t4ce/stylo@3786da941f0042c923fb5981a0edda86b8d38dba`](https://github.com/t4ce/stylo/commit/3786da941f0042c923fb5981a0edda86b8d38dba).
 - Taffy: `1b918bafcab101dd234ebeb27da0443e24fd9de2`, selected by that Blitz revision.
 - Parley: `0.11.1`.
 
 `Cargo.lock` is committed. The Solara package version remains `0.0.6`.
 No WGPU, Winit, `blitz-shell` or `reqwest` package is in the active graph.
 Keep Blitz packages on the same revision when updating the integration.
+
+All eleven Stylo workspace crates use that fork revision to preserve shared
+type identity across Blitz and Stylo. The fork excludes TRUEOS/legacy `zkvm`
+from Unix pthread-handle extensions and types the Servo thread-count sentinel.
+The Blueprint packer carries these full-commit Git patches into its audited
+source overlay using Cargo's locked checkout; it does not substitute a
+registry Stylo copy. The SDK's Rayon vendor preserves upstream's
+`std::io::Result` spawn callback API. Parallel style traversal still needs an
+explicit TRUEOS worker adapter with capacity and shutdown ownership.
 
 ## Validation
 
