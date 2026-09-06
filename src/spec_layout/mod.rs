@@ -135,6 +135,18 @@ impl SpecLayout {
         self.document.mutate()
     }
 
+    /// Deliver a kernel-decoded image through Blitz's normal resource completion.
+    pub fn load_image(&mut self, url: String, width: u32, height: u32, rgba: Arc<Vec<u8>>) {
+        self.document.load_resource(blitz_dom::net::ResourceLoadResponse {
+            request_id: usize::MAX,
+            node_id: None,
+            resolved_url: Some(url),
+            result: Ok(blitz_dom::net::Resource::Image(
+                blitz_dom::util::ImageType::Image, width, height, rgba,
+            )),
+        });
+    }
+
     pub fn summary(&self) -> LayoutSummary {
         let mut summary = LayoutSummary {
             generation: self.generation,

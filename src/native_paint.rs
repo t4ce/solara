@@ -19,9 +19,33 @@ pub struct PageMesh {
     pub vertices: Vec<[f32; 2]>,
     pub triangles: Vec<u32>,
     pub lines: Vec<u32>,
+    pub images: Vec<ImageQuad>,
     pub boxes: usize,
     pub glyphs: usize,
     pub height: f32,
+}
+
+/// One image's content quad in document coordinates, with cropped UVs.
+#[derive(Clone, Debug)]
+pub struct ImageQuad {
+    pub url: String,
+    pub corners: [[f32; 2]; 4],
+    pub uv: [[f32; 2]; 4],
+}
+
+impl ImageQuad {
+    pub fn visible(&self, width: f32, height: f32, scroll_y: f32) -> bool {
+        self.corners.iter().any(|p| p[0] >= 0.0)
+            && self.corners.iter().any(|p| p[0] <= width)
+            && self.corners.iter().any(|p| p[1] >= scroll_y)
+            && self.corners.iter().any(|p| p[1] <= scroll_y + height)
+    }
+}
+
+/// JPEG selection uses the URL path, so query strings and fragments are harmless.
+pub fn jpeg_url(url: &url::Url) -> bool {
+    url.path().rsplit_once('.').is_some_and(|(_, ext)|
+        ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
 }
 
 impl PageMesh {
@@ -138,6 +162,57 @@ impl Painter {
                     base,
                 ]);
                 mesh.boxes += 1;
+            }
+            if let Some(element) = node.element_data()
+                && element.name.local.as_ref() == "img"
+                && let Some(image) = element.raster_image_data()
+                && let Some(src) = element.attr("src")
+                && let Ok(url) = doc.base_url().join(src)
+                && jpeg_url(&url)
+            {
+                let x = layout.border.left + layout.padding.left;
+                let y = layout.border.top + layout.padding.top;
+                let w = layout.size.width - x - layout.border.right - layout.padding.right;
+                let h = layout.size.height - y - layout.border.bottom - layout.padding.bottom;
+                if w > 0.0 && h > 0.0 && image.width > 0 && image.height > 0 {
+                    let iw = image.width as f32;
+                    let ih = image.height as f32;
+                    let fit = doc.resolved_style_value(node.id, "object-fit");
+                    let scale = match fit.as_str() {
+                        "contain" => (w / iw).min(h / ih),
+                        "cover" => (w / iw).max(h / ih),
+                        "none" => 1.0,
+                        "scale-down" => (w / iw).min(h / ih).min(1.0),
+                        _ => 0.0,
+                    };
+                    let (dw, dh) = if scale == 0.0 { (w, h) } else { (iw * scale, ih * scale) };
+                    // Computed object-position is a pair of percentages/lengths.
+                    let position = doc.resolved_style_value(node.id, "object-position");
+                    let mut parts = position.split_whitespace();
+                    let offset = |part: Option<&str>, remaining: f32| -> f32 {
+                        let part = part.unwrap_or("50%");
+                        if let Some(p) = part.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()) {
+                            remaining * p / 100.0
+                        } else {
+                            part.strip_suffix("px").and_then(|v| v.parse().ok()).unwrap_or(remaining * 0.5)
+                        }
+                    };
+                    let dx = offset(parts.next(), w - dw);
+                    let dy = offset(parts.next(), h - dh);
+                    let left = dx.max(0.0);
+                    let top = dy.max(0.0);
+                    let right = (dx + dw).min(w);
+                    let bottom = (dy + dh).min(h);
+                    if right > left && bottom > top {
+                        mesh.images.push(ImageQuad {
+                            url: url.into(),
+                            corners: [[x+left,y+top],[x+right,y+top],[x+right,y+bottom],[x+left,y+bottom]]
+                                .map(|p| transform_point(transform, p)),
+                            uv: [[(left-dx)/dw,(top-dy)/dh],[(right-dx)/dw,(top-dy)/dh],
+                                 [(right-dx)/dw,(bottom-dy)/dh],[(left-dx)/dw,(bottom-dy)/dh]],
+                        });
+                    }
+                }
             }
             if !node.flags.is_inline_root() {
                 continue;
