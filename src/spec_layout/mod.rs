@@ -65,6 +65,7 @@ impl SpecLayout {
         // Sequential style traversal avoids depending on a host thread pool.
         config.style_threading = blitz_dom::StyleThreading::Sequential;
         let mut document = BaseDocument::new(config);
+        document.add_user_agent_stylesheet(include_str!("button-defaults.css"));
         let mut source_nodes = BTreeMap::new();
         let root = document.root_node().id;
         source_nodes.insert("root".into(), root);
@@ -111,6 +112,25 @@ impl SpecLayout {
         validate_viewport(&viewport)?;
         self.document.set_viewport(viewport);
         Ok(())
+    }
+
+    /// UI4 supplies frame-local pixels; native scrolling is a document projection.
+    /// Blitz owns hit testing, ancestor :hover state and Stylo invalidation.
+    pub fn pointer_move(&mut self, position: Option<[f32; 2]>, scroll_y: f32) -> bool {
+        let (width, height) = self.document.viewport().logical_size();
+        match position {
+            Some([x, y])
+                if x.is_finite()
+                    && y.is_finite()
+                    && x >= 0.0
+                    && y >= 0.0
+                    && x < width
+                    && y < height =>
+            {
+                self.document.set_hover_to(x, y + scroll_y)
+            }
+            _ => self.document.clear_hover(),
+        }
     }
 
     /// Artifact paths are import-time references (`root.1.0`, etc.), not live

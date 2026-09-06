@@ -19,6 +19,8 @@ pub struct PageMesh {
     pub vertices: Vec<[f32; 2]>,
     pub triangles: Vec<u32>,
     pub lines: Vec<u32>,
+    /// One resolved RGBA color per line, in the same order as `lines.chunks(2)`.
+    pub line_colors: Vec<u32>,
     pub images: Vec<ImageQuad>,
     pub boxes: usize,
     pub glyphs: usize,
@@ -57,7 +59,7 @@ impl PageMesh {
         let mut out = Self::default();
         let mut remap = vec![u32::MAX; self.vertices.len()];
         for (source, count, lines) in [(&self.lines, 2, true), (&self.triangles, 3, false)] {
-            for primitive in source.chunks_exact(count) {
+            for (primitive_index, primitive) in source.chunks_exact(count).enumerate() {
                 let mut low = [f32::INFINITY; 2];
                 let mut high = [f32::NEG_INFINITY; 2];
                 for index in primitive {
@@ -73,6 +75,9 @@ impl PageMesh {
                     || low[1] > scroll_y + height + 2.0
                 {
                     continue;
+                }
+                if lines {
+                    out.line_colors.push(self.line_colors[primitive_index]);
                 }
                 for index in primitive {
                     let slot = &mut remap[*index as usize];
@@ -162,6 +167,31 @@ impl Painter {
                     base + 3,
                     base,
                 ]);
+                let element = node.element_data().expect("element checked above");
+                let is_button = element.name.local.as_ref() == "button"
+                    || (element.name.local.as_ref() == "input"
+                        && element.attrs().iter().any(|a| {
+                            a.name.local.as_ref() == "type"
+                                && ["button", "submit", "reset"]
+                                    .iter()
+                                    .any(|kind| a.value.eq_ignore_ascii_case(kind))
+                        }));
+                if is_button {
+                    let current = style.clone_color();
+                    let border = style.get_border();
+                    for color in [
+                        &border.border_top_color,
+                        &border.border_right_color,
+                        &border.border_bottom_color,
+                        &border.border_left_color,
+                    ] {
+                        mesh.line_colors
+                            .push(color.resolve_to_absolute(&current).to_nscolor());
+                    }
+                } else {
+                    mesh.line_colors
+                        .extend([u32::from_le_bytes([65, 151, 174, 255]); 4]);
+                }
                 mesh.boxes += 1;
             }
             if let Some(element) = node.element_data()

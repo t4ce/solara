@@ -79,7 +79,15 @@ into at most 12,288 indices each so the broker can use small contiguous DMA
 allocations, still within one native batch submission per frame. A fatal draw
 error is reported per window and leaves the other windows live. No FontCanvas, glyph sprites, WGPU or Winit are used.
 
-This is a diagnostic view: authored fills/colors, rounded borders, nested overflow
+Button contours now use their computed CSS border colors. A small user-agent
+stylesheet in `src/spec_layout/button-defaults.css` brightens enabled buttons on
+`:hover`; ordinary author rules keep cascade priority. UI4 pointer coordinates
+feed Blitz hit testing, including descendants and the native scroll offset.
+Leaving the frame or losing its cursor route clears hover. Pointer moves within
+the same hit target do not rebuild glyphs or submit another frame. This first
+feedback is a border highlight; fills and click actions are still subsequent work.
+
+This is a diagnostic view: general authored fills/colors, rounded borders, nested overflow
 clipping, form-control text, and full paint/compositing order are not implemented.
 Text uses the existing native triangle rasterizer without a new antialiasing
 pass. QJS interaction and continuous animation are subsequent work. The window

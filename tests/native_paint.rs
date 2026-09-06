@@ -293,3 +293,59 @@ fn homepage_keeps_the_complete_logo_centered_across_window_sizes() {
         assert!(((right - left) / (bottom - top) - 640.0 / 360.0).abs() < 0.001);
     }
 }
+
+#[test]
+fn button_hover_uses_css_cascade_and_retained_glyphs() {
+    let mut layout = document(
+        r#"<style>
+        body{margin:0} button{position:absolute;left:20px;top:20px;width:140px;height:40px;
+        padding:0;border-style:solid;border-width:2px}
+        #disabled{top:80px} #author{top:140px;border-color:#123456}
+        #author:hover{border-color:#abcdef;transform:translateX(8px)}
+        #below{top:800px}
+        </style><button id="plain"><span>Hover me</span></button>
+        <button id="disabled" disabled>Disabled</button>
+        <button id="author">Author CSS</button><button id="below">Scrolled</button>"#,
+    );
+    let mut painter = Painter::default();
+    let initial = painter.paint(layout.document()).unwrap();
+    let cached = painter.cached_glyphs();
+    let border = |layout: &SpecLayout, id| {
+        let id = layout.document().get_element_by_id(id).unwrap();
+        layout
+            .document()
+            .resolved_style_value(id, "border-top-color")
+    };
+    assert_eq!(border(&layout, "plain"), "rgb(65, 151, 174)");
+    assert!(layout.pointer_move(Some([80.0, 40.0]), 0.0));
+    layout.resolve(0.0).unwrap();
+    assert_eq!(border(&layout, "plain"), "rgb(229, 237, 248)");
+    let hovered = painter.paint(layout.document()).unwrap();
+    assert_eq!(initial.vertices, hovered.vertices);
+    assert_eq!(cached, painter.cached_glyphs());
+    assert_ne!(initial.line_colors, hovered.line_colors);
+    let clipped = hovered.viewport(960.0, 640.0, 0.0);
+    assert_eq!(clipped.line_colors.len() * 2, clipped.lines.len());
+    assert!(
+        clipped
+            .line_colors
+            .contains(&u32::from_le_bytes([229, 237, 248, 255]))
+    );
+    assert!(!layout.pointer_move(Some([81.0, 40.0]), 0.0));
+
+    layout.pointer_move(Some([80.0, 100.0]), 0.0);
+    layout.resolve(0.0).unwrap();
+    assert_eq!(border(&layout, "disabled"), "rgb(65, 151, 174)");
+    assert_eq!(border(&layout, "plain"), "rgb(65, 151, 174)");
+    layout.pointer_move(Some([80.0, 160.0]), 0.0);
+    layout.resolve(0.0).unwrap();
+    assert_eq!(border(&layout, "author"), "rgb(171, 205, 239)");
+
+    layout.pointer_move(Some([80.0, 40.0]), 780.0);
+    layout.resolve(0.0).unwrap();
+    assert_eq!(border(&layout, "below"), "rgb(229, 237, 248)");
+    assert_eq!(border(&layout, "author"), "rgb(18, 52, 86)");
+    assert!(layout.pointer_move(None, 780.0));
+    layout.resolve(0.0).unwrap();
+    assert_eq!(border(&layout, "below"), "rgb(65, 151, 174)");
+}

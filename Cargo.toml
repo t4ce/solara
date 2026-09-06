@@ -19,6 +19,7 @@ include = [
     "README.md",
     "preview.html",
     "src/**/*.rs",
+    "src/**/*.css",
     "src/**/*.js",
     "assets/fonts/*",
     "assets/images/*",

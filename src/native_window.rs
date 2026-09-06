@@ -31,7 +31,6 @@ const DEMOS: [(&str, &str); 4] = [
 ];
 const BACKGROUND: u32 = u32::from_le_bytes([13, 18, 27, 255]);
 const INK: u32 = u32::from_le_bytes([229, 237, 248, 255]);
-const CONTOUR: u32 = u32::from_le_bytes([65, 151, 174, 255]);
 const BROWSER_CADENCE_MS: u64 = 250;
 
 struct Window {
@@ -52,6 +51,7 @@ struct Window {
     vertices: Option<Buffer>,
     indices: Option<Buffer>,
     scroll_y: f32,
+    pointer: Option<(trueos::ui4_scene::CursorSource, [f32; 2])>,
     resize: Option<ResizeEvent>,
     dirty: bool,
     uploaded: bool,
@@ -151,6 +151,7 @@ impl Window {
             vertices: None,
             indices: None,
             scroll_y: 0.0,
+            pointer: None,
             resize: None,
             dirty: true,
             uploaded: false,
@@ -191,8 +192,10 @@ impl Window {
             self.uploaded = false;
         }
         let previous = self.scroll_y;
+        let previous_pointer = self.pointer;
         while let Some(event) = self.frame.take_pointer_event()? {
             self.scroll_y -= event.wheel as f32 * 48.0;
+            self.pointer = Some((event.source, [event.local_x as f32, event.local_y as f32]));
         }
         while let Some(event) = self.frame.take_pan_event()? {
             self.scroll_y -= event.dy as f32;
@@ -202,6 +205,27 @@ impl Window {
             (self.mesh.height - self.frame.height() as f32).max(0.0),
         );
         if self.scroll_y != previous {
+            self.dirty = true;
+            self.uploaded = false;
+        }
+        // Selection changes can remove this cursor's route without delivering
+        // another local movement. Do not leave a button stuck in :hover.
+        if let Some((source, _)) = self.pointer
+            && !self
+                .frame
+                .input_routes()?
+                .iter()
+                .any(|route| route.cursor == source && route.selected_for_window)
+        {
+            self.pointer = None;
+        }
+        if (self.dirty || self.pointer != previous_pointer)
+            && self
+                .layout
+                .pointer_move(self.pointer.map(|(_, point)| point), self.scroll_y)
+            && self.layout.resolve(0.0)?
+        {
+            self.mesh = self.painter.paint(self.layout.document())?;
             self.dirty = true;
             self.uploaded = false;
         }
@@ -324,14 +348,28 @@ impl Window {
         let mut remap = vec![(u32::MAX, 0u32); visible.vertices.len()];
         // The broker materializes each draw in contiguous DMA storage. Bound
         // each allocation, and use base_vertex so it copies only that draw.
-        for (source, color, topology) in [
-            (&visible.lines, CONTOUR, vgpu::PRIMITIVE_TOPOLOGY_LINE_LIST),
-            (
-                &visible.triangles,
+        let mut line_groups = std::collections::BTreeMap::<u32, Vec<u32>>::new();
+        for (line, color) in visible.lines.chunks_exact(2).zip(&visible.line_colors) {
+            line_groups
+                .entry(*color)
+                .or_default()
+                .extend_from_slice(line);
+        }
+        let sources = line_groups
+            .iter()
+            .map(|(color, indices)| {
+                (
+                    indices.as_slice(),
+                    *color,
+                    vgpu::PRIMITIVE_TOPOLOGY_LINE_LIST,
+                )
+            })
+            .chain(std::iter::once((
+                visible.triangles.as_slice(),
                 INK,
                 vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-            ),
-        ] {
+            )));
+        for (source, color, topology) in sources {
             for chunk in source.chunks(12_288) {
                 if draws.len() == vgpu::MAX_INDEXED_BATCH_V2_DRAWS {
                     return Err(Error::Other(
