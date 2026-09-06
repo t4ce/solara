@@ -1,31 +1,41 @@
 # Solara
 
-Solara is currently a TRUEOS-first, renderer-free DOM/CSS handoff probe with a
-bounded first page-script step and a Shell2 `surf` launch path.
+Solara is a TRUEOS browser project. The current milestone parses HTML/CSS and
+computes retained layout using Blitz, Stylo, Taffy and Parley. It also has a
+bounded first page-script proof and a Shell2 `surf` launch path. Rendering and
+Picasso scene publication are the next boundary.
 
-The repository retains the browser experiments for later work, but this branch
-has one deliberate job: measure how quickly a fixed five-page corpus becomes a
-validated RustQJSDom artifact before layout or presentation is reintroduced,
-then prove that the retained QuickJS runtime can execute one selected script.
+The goal is faithful rendering of selected modern CSS frameworks and a useful
+browser API surface on TRUEOS/Solara. This is not a cross-platform browser shell
+or a plan to reproduce every Chrome/Firefox feature.
 
 > Current status: Solara initializes one QuickJS-backed RustQJSDom engine,
 > parses five embedded documents through Parse5 and Lightning CSS, logs each
 > validated handoff, executes at most the first supported classic script per
-> page, and exits. Every script tag remains preserved in the artifact; later
+> page, imports the original DOM into Blitz, resolves styles and measured
+> boxes/glyphs at 1280x800, and exits. Every script tag remains preserved; later
 > scripts, modules, import maps, and data scripts remain inert.
 
 When Shell2 launches Solara through `surf <url>`, it supplies a one-shot run
 script containing the canonical page URL and the TRUEOSFS path of the staged
 HTML. Solara validates the HTTP(S) URL with the Rust `url` crate, reads that
-single document, parses it without executing network page scripts, and exits.
+single document, parses and lays it out without executing network page scripts,
+and exits. Its resource loader still serves only the embedded corpus; unavailable
+resources are reported and this path is not a complete network page render.
 
 ## Current boundary
 
-The active `solara` binary performs DOM/CSS compilation plus at most one
-bounded classic script evaluation per page on Linux and TRUEOS. A page is
-"handoff ready" after the typed `rustqjsdom.artifact/v2` contract validates. It
-does not request a UI4 `Frame`, text rows/canvas, shapes, Picasso lowering, WGPU
-surface, Linux window, or presentation.
+The default `spec-layout` feature adds a live Blitz document to the validated
+`rustqjsdom.artifact/v2` handoff. Parse5 constructs the tree; original style
+elements, inline CSS and stylesheet links feed Stylo. Taffy and Parley provide
+measured boxes and shaped text. The parser's `styleIndex` remains a diagnostic
+snapshot and is not flattened into inline styles. `layout-ready` logs actual
+layout counts separately from parsing. Neither stage presents a window or
+publishes a Picasso scene.
+
+See [`docs/spec-layout.md`](docs/spec-layout.md) for the Rust boundary,
+dependency pins, host resource contract, validation and remaining native work.
+Use `--no-default-features` to run the original parser-only probe.
 
 The five-page corpus is used when Solara starts without a run script. A
 Shell2 `surf` launch parses only the staged page named by its run script.
@@ -74,15 +84,20 @@ The project uses Rust 2024 edition.
 
 ## Quick Start
 
-Clone the repository:
+Build inside the TRUEOS checkout layout (`TRUEOS-Blueprints/apps/solara`), with
+the existing `../../api`, Blueprint crates and sibling TRUEOS dependencies
+available. A standalone clone still needs those native path dependencies for
+Cargo manifest resolution, even when testing on a host.
+
+Clone Solara's branch into that location:
 
 ```bash
-git clone https://github.com/t4ce/solara.git
+git clone --branch true https://github.com/t4ce/solara.git apps/solara
 ```
 
 Then run the following command from the project root. It parses all five pages,
-executes the one embedded external-script proof, prints per-page and aggregate
-timings, and opens no window:
+executes the one embedded external-script proof, computes layout, prints
+per-page timings, and opens no window:
 
 ```bash
 cargo run --locked
@@ -93,6 +108,7 @@ Run checks:
 ```bash
 cargo check --locked
 cargo test --locked
+cargo run --locked --no-default-features
 ```
 
 The `trueos-first` feature documents the branch selection used by Blueprint
@@ -107,23 +123,25 @@ sequentially for all five pages.
 
 ## Project Structure
 
-The active source surface is `src/main.rs`, `src/parser_probe.rs`, and
-`src/page_script.rs`.
+The active source includes `src/spec_layout/` (retained document import and
+layout), `src/layout_probe.rs` (corpus host adapter), `src/parser_probe.rs`,
+`src/page_script.rs`, and `src/run_script.rs`. The bundled proof font is in
+`assets/fonts/`. Historical `src/gpu_ui/` code remains inactive.
 
-The old `crates/solara-wgpu-shim` crate and shader sources are removed on this
-branch. Its font assets remain as inactive research material. The dependency
-lockfile contains no WGPU or Winit packages for the active graph. The vendored
-RustQJSDom component is the only active browser parsing stage; Solara owns the
-new page-script loading and execution policy.
+The active dependency graph has no WGPU, Winit, desktop shell or HTTP client.
+Host-side Rust tests validate layout behavior; TRUEOS execution still requires
+the platform's custom toolchain and native build/presentation validation.
 
 ## Roadmap
 
 - Expose a reduced `window` / `document` API to JavaScript.
 - Synchronize JavaScript DOM mutations into style invalidation and the renderer
   projection.
-- Add an event loop, timers, `requestAnimationFrame`, and an animation timeline.
+- Connect the TRUEOS frame clock and event loop to Blitz's existing animation
+  sampling and expose the selected APIs to QuickJS.
 - Implement general resource loading, navigation, and error handling.
-- Expand layout, painting, and browser compatibility.
+- Lower the resolved document through a retained Picasso paint adapter.
+- Verify selected framework fixtures against their intended geometry and fonts.
 
 ## License
 

@@ -1,5 +1,11 @@
 # Native text and wireframe integration
 
+Update: the default `spec-layout` feature now implements the retained
+Parse5-to-Blitz document boundary and delegates CSS/layout/text to
+Stylo/Taffy/Parley. See [spec-layout.md](spec-layout.md) for the current code
+and validation. The source audit below describes the earlier parser-only
+revision; Picasso painting and native glyph-resource publication remain proposed.
+
 Status: proposed implementation sequence, source audit 2026-09-06.
 Solara revisions inspected: `true` at `df7ba43`, local `main` at `f4c3014`.
 This document does not claim that the renderer below is implemented.

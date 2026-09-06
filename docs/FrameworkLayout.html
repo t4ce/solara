@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Solara framework layout proof</title>
+  <!-- Authored coverage fixture for framework CSS mechanisms, not generated Tailwind. -->
+  <style>
+    @layer reset, theme, components, utilities;
+    @layer reset {
+      * { box-sizing: border-box; }
+      body, h1, h2, p { margin: 0; }
+    }
+    @layer theme {
+      :root { --space: 16px; --shell-gap: 24px; }
+      body { font-family: monospace; font-size: 16px; line-height: 24px; }
+    }
+    @layer components {
+      #dashboard { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--shell-gap); padding: 24px; }
+      #cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space); }
+      .card { padding: var(--space); border: 1px solid #444; min-width: 0; }
+      #toolbar { display: flex; justify-content: space-between; gap: var(--space); margin-bottom: 24px; }
+      .title { font-size: 24px; line-height: 32px; }
+      #sidebar { padding: var(--space); }
+      @media (max-width: 767px) {
+        #dashboard { grid-template-columns: minmax(0, 1fr); }
+        #sidebar { display: none; }
+        #cards { grid-template-columns: minmax(0, 1fr); }
+      }
+    }
+    @layer utilities { .min-w-0 { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div id="dashboard">
+    <aside id="sidebar">TRUEOS / Solara</aside>
+    <main id="content" class="min-w-0">
+      <header id="toolbar"><h1 class="title">Overview</h1><span id="status">Online</span></header>
+      <section id="cards">
+        <article id="card-a" class="card"><h2>Layout</h2><p>Grid columns follow the available width.</p></article>
+        <article id="card-b" class="card"><h2>Text</h2><p>These words use the same shaped glyphs that the painter will consume.</p></article>
+        <article id="card-c" class="card"><h2>Retention</h2><p>Resize the viewport while retaining the document and font resources.</p></article>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

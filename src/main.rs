@@ -1,5 +1,7 @@
 // trueos-blueprint: features=["trueos-first"]
 
+#[cfg(feature = "spec-layout")]
+mod layout_probe;
 mod page_script;
 mod parser_probe;
 mod run_script;

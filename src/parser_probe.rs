@@ -104,6 +104,21 @@ fn run_pages(pages: &[EmbeddedPage<'_>], execute_scripts: bool) -> Result<(), St
             None
         };
         let elapsed_script_ns = monotonic_nanos().saturating_sub(script_started);
+        #[cfg(feature = "spec-layout")]
+        let _layout_owner = {
+            let layout_started = monotonic_nanos();
+            let (layout, missing) = crate::layout_probe::layout_artifact(&artifact)
+                .map_err(|error| format!("{} layout: {error}", page.name))?;
+            crate::layout_probe::report(
+                page.name,
+                layout.summary(),
+                missing,
+                nanos_to_micros(monotonic_nanos().saturating_sub(layout_started)),
+            );
+            // Retain the document through this page's handoff. A presenting
+            // host keeps this owner alongside its page runtime across frames.
+            layout
+        };
         if script_execution.is_some() {
             executed_scripts = executed_scripts.saturating_add(1);
         }
@@ -172,7 +187,7 @@ fn run_pages(pages: &[EmbeddedPage<'_>], execute_scripts: bool) -> Result<(), St
     Ok(())
 }
 
-fn load_embedded_stylesheet(
+pub(crate) fn load_embedded_stylesheet(
     _document_url: &str,
     _base_href: Option<&str>,
     href: &str,
@@ -238,12 +253,12 @@ fn monotonic_nanos() -> u64 {
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn report_info(arguments: fmt::Arguments<'_>) {
+pub(crate) fn report_info(arguments: fmt::Arguments<'_>) {
     trueos::logl::log(trueos::logl::level::INFO, arguments);
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn report_info(arguments: fmt::Arguments<'_>) {
+pub(crate) fn report_info(arguments: fmt::Arguments<'_>) {
     println!("{arguments}");
 }
 
@@ -284,6 +299,13 @@ mod tests {
                 page.name,
                 artifact.style_index.load_errors
             );
+            #[cfg(feature = "spec-layout")]
+            {
+                let (layout, _) = crate::layout_probe::layout_artifact(&artifact).expect(page.name);
+                let summary = layout.summary();
+                assert!(summary.boxes > 0, "{} has measured boxes", page.name);
+                assert!(summary.glyphs > 0, "{} has positioned glyphs", page.name);
+            }
             if execute_first_page_script(engine.js_mut(), &artifact, load_embedded_script)
                 .expect(page.name)
                 .is_some()

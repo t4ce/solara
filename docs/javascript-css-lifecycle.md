@@ -1,5 +1,11 @@
 # First page script and the CSS lifecycle
 
+The new native [spec-layout integration](spec-layout.md) exposes Blitz's
+invalidating Rust mutation API and explicit CSS animation sampling. QuickJS is
+not yet bound to that live document: the page-script limitations below still
+apply to JavaScript. CSS can now be resolved at a host-supplied time without
+requiring a JavaScript animation implementation.
+
 ## Current milestone
 
 Solara keeps every `<script>` element in each RustQJSDom artifact, but executes
