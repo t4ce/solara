@@ -1,0 +1,1 @@
+cat.jpg is copied unchanged from TRUEOS/vendor/limine/test/bg.jpg, the existing Limine test background (1152 × 768 baseline JPEG). Used here as one shared image to demonstrate layout, texture reuse, object-fit and scrolling.

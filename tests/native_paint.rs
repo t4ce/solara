@@ -175,3 +175,83 @@ fn viewport_compacts_visible_primitives_and_scroll_reveals_the_rest() {
         );
     }
 }
+
+#[test]
+fn jpeg_urls_use_path_extensions() {
+    for url in [
+        "https://example.test/cat.JPG?v=2#image",
+        "trueos://solara/assets/cat.jpeg",
+    ] {
+        assert!(solara::native_paint::jpeg_url(
+            &url::Url::parse(url).unwrap()
+        ));
+    }
+    for url in [
+        "https://example.test/cat.png",
+        "https://example.test/image?name=cat.jpg",
+    ] {
+        assert!(!solara::native_paint::jpeg_url(
+            &url::Url::parse(url).unwrap()
+        ));
+    }
+}
+
+#[test]
+fn decoded_images_reflow_and_crop_without_rebuilding_glyphs_on_scroll() {
+    struct Images;
+    impl blitz_traits::net::NetProvider for Images {
+        fn fetch(
+            &self,
+            _: usize,
+            _: blitz_traits::net::Request,
+            _: Box<dyn blitz_traits::net::NetHandler>,
+        ) {
+        }
+    }
+    let mut engine = DomEngine::new().unwrap();
+    let artifact = engine
+        .parse(
+            r#"<html><head><base href="https://example.test/pictures/"><style>
+        body { margin:0 } img { display:block }
+        #cover { width:200px;height:60px;object-fit:cover }
+        #contain { width:200px;height:60px;object-fit:contain; transform:translateX(10px) }
+        </style></head><body><img src="cat.jpeg"><img id="cover" src="cat.jpeg">
+        <div style="height:800px"></div><img id="contain" src="cat.jpeg"></body></html>"#,
+            "https://example.test/page.html",
+        )
+        .unwrap();
+    let mut layout = SpecLayout::from_artifact(
+        &artifact,
+        DocumentConfig {
+            viewport: Some(Viewport {
+                window_size: (400, 300),
+                ..Default::default()
+            }),
+            font_ctx: Some(bundled_font_context()),
+            net_provider: Some(std::sync::Arc::new(Images)),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    layout.resolve(0.0).unwrap();
+    layout.load_image(
+        "https://example.test/pictures/cat.jpeg".into(),
+        80,
+        40,
+        std::sync::Arc::new(vec![255; 80 * 40 * 4]),
+    );
+    layout.resolve(0.0).unwrap();
+    let mut painter = Painter::default();
+    let mesh = painter.paint(layout.document()).unwrap();
+    assert_eq!(mesh.images.len(), 3);
+    let natural = &mesh.images[0];
+    assert_eq!(natural.corners[2], [80.0, 40.0]);
+    let cover = &mesh.images[1];
+    assert!((cover.uv[0][1] - 0.2).abs() < 0.001);
+    assert!((cover.uv[2][1] - 0.8).abs() < 0.001);
+    let contain = &mesh.images[2];
+    assert!((contain.corners[0][0] - 50.0).abs() < 0.01);
+    assert!(!contain.visible(400.0, 300.0, 0.0));
+    assert!(contain.visible(400.0, 300.0, 800.0));
+    assert_eq!(contain.uv, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+}

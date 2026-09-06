@@ -40,6 +40,17 @@
         <article id="card-b" class="card"><h2>Text</h2><p>These words use the same shaped glyphs that the painter will consume.</p></article>
         <article id="card-c" class="card"><h2>Retention</h2><p>Resize the viewport while retaining the document and font resources.</p></article>
       </section>
+      <section style="margin-top:24px">
+        <h2>JPEG geometry</h2>
+        <p>One decoded texture, reused at different sizes. Scroll to the next image.</p>
+        <div style="display:flex;gap:16px;margin-top:16px">
+          <img src="../assets/cat.jpg" alt="Cat" style="width:60%;height:260px;object-fit:cover">
+          <img src="../assets/cat.jpg" alt="Cat contained" style="width:30%;height:260px;object-fit:contain">
+        </div>
+        <div style="height:500px"><p>The image below shares the same texture.</p></div>
+        <img src="../assets/cat.jpg" alt="Cat below fold" style="width:100%;height:300px;object-fit:cover">
+        <p>End of the image and scrolling demo.</p>
+      </section>
     </main>
   </div>
 </body>

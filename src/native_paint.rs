@@ -44,8 +44,9 @@ impl ImageQuad {
 
 /// JPEG selection uses the URL path, so query strings and fragments are harmless.
 pub fn jpeg_url(url: &url::Url) -> bool {
-    url.path().rsplit_once('.').is_some_and(|(_, ext)|
-        ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
+    url.path()
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
 }
 
 impl PageMesh {
@@ -166,7 +167,11 @@ impl Painter {
             if let Some(element) = node.element_data()
                 && element.name.local.as_ref() == "img"
                 && let Some(image) = element.raster_image_data()
-                && let Some(src) = element.attr("src")
+                && let Some(src) = element
+                    .attrs()
+                    .iter()
+                    .find(|a| a.name.local.as_ref() == "src")
+                    .map(|a| a.value.as_str())
                 && let Ok(url) = doc.base_url().join(src)
                 && jpeg_url(&url)
             {
@@ -185,16 +190,23 @@ impl Painter {
                         "scale-down" => (w / iw).min(h / ih).min(1.0),
                         _ => 0.0,
                     };
-                    let (dw, dh) = if scale == 0.0 { (w, h) } else { (iw * scale, ih * scale) };
+                    let (dw, dh) = if scale == 0.0 {
+                        (w, h)
+                    } else {
+                        (iw * scale, ih * scale)
+                    };
                     // Computed object-position is a pair of percentages/lengths.
                     let position = doc.resolved_style_value(node.id, "object-position");
                     let mut parts = position.split_whitespace();
                     let offset = |part: Option<&str>, remaining: f32| -> f32 {
                         let part = part.unwrap_or("50%");
-                        if let Some(p) = part.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()) {
+                        if let Some(p) = part.strip_suffix('%').and_then(|v| v.parse::<f32>().ok())
+                        {
                             remaining * p / 100.0
                         } else {
-                            part.strip_suffix("px").and_then(|v| v.parse().ok()).unwrap_or(remaining * 0.5)
+                            part.strip_suffix("px")
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(remaining * 0.5)
                         }
                     };
                     let dx = offset(parts.next(), w - dw);
@@ -206,10 +218,19 @@ impl Painter {
                     if right > left && bottom > top {
                         mesh.images.push(ImageQuad {
                             url: url.into(),
-                            corners: [[x+left,y+top],[x+right,y+top],[x+right,y+bottom],[x+left,y+bottom]]
-                                .map(|p| transform_point(transform, p)),
-                            uv: [[(left-dx)/dw,(top-dy)/dh],[(right-dx)/dw,(top-dy)/dh],
-                                 [(right-dx)/dw,(bottom-dy)/dh],[(left-dx)/dw,(bottom-dy)/dh]],
+                            corners: [
+                                [x + left, y + top],
+                                [x + right, y + top],
+                                [x + right, y + bottom],
+                                [x + left, y + bottom],
+                            ]
+                            .map(|p| transform_point(transform, p)),
+                            uv: [
+                                [(left - dx) / dw, (top - dy) / dh],
+                                [(right - dx) / dw, (top - dy) / dh],
+                                [(right - dx) / dw, (bottom - dy) / dh],
+                                [(left - dx) / dw, (bottom - dy) / dh],
+                            ],
                         });
                     }
                 }

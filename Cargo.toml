@@ -21,6 +21,7 @@ include = [
     "src/**/*.rs",
     "src/**/*.js",
     "assets/fonts/*",
+    "assets/images/*",
     "tests/**/*.rs",
     "docs/spec-layout.md",
     "docs/FrameworkLayout.html",

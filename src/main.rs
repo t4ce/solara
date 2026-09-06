@@ -4,6 +4,8 @@
 mod layout_probe;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
 mod native_window;
+#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+mod native_images;
 mod page_script;
 mod parser_probe;
 mod run_script;

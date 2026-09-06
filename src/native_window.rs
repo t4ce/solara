@@ -1,9 +1,11 @@
 //! UI4 owns the window; this adapter submits the document's native text/lines.
+use crate::native_images::{Images, Resources};
 use rust_qjs_dom::DomEngine;
 use solara::{
     native_paint::{PageMesh, Painter},
     spec_layout::{SpecLayout, Viewport},
 };
+use std::sync::Arc;
 use trueos::ui4_scene::{Damage, Error as UiError, Frame, ResizeEvent};
 use trueos::vgpu::{self, Buffer, Device, Queue, QueueClass, RenderPipeline, ShaderModule};
 
@@ -30,6 +32,12 @@ const INK: u32 = u32::from_le_bytes([229, 237, 248, 255]);
 const CONTOUR: u32 = u32::from_le_bytes([65, 151, 174, 255]);
 
 struct Window {
+    resources: Arc<Resources>,
+    images: Images,
+    image_shader: ShaderModule,
+    image_pipeline: RenderPipeline,
+    image_vertices: Buffer,
+    image_indices: Buffer,
     frame: Frame,
     layout: SpecLayout,
     painter: Painter,
@@ -87,6 +95,7 @@ impl Error {
 impl Window {
     fn open(
         mut layout: SpecLayout,
+        resources: Arc<Resources>,
         x: i32,
         y: i32,
         width: u32,
@@ -105,9 +114,29 @@ impl Window {
         let shader = device
             .create_shader_module(vgpu::SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64)?;
         let pipeline = device.create_render_pipeline(shader, 12, 0)?;
+        let image_shader =
+            device.create_shader_module(vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64)?;
+        let image_pipeline = device.create_render_pipeline(image_shader, 20, 0)?;
+        let image_vertices =
+            device.create_buffer(80, vgpu::BUFFER_USAGE_MAP_WRITE | vgpu::BUFFER_USAGE_VERTEX)?;
+        let image_indices =
+            device.create_buffer(24, vgpu::BUFFER_USAGE_MAP_WRITE | vgpu::BUFFER_USAGE_INDEX)?;
+        let mut image_index_bytes = Vec::new();
+        for i in [0u32, 1, 2, 0, 2, 3] {
+            image_index_bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        if device.write_buffer(image_indices, 0, &image_index_bytes)? != 24 {
+            return Err(Error::Other("short image index upload".into()));
+        }
         let mut painter = Painter::default();
         let mesh = painter.paint(layout.document())?;
         Ok(Self {
+            resources,
+            images: Images::default(),
+            image_shader,
+            image_pipeline,
+            image_vertices,
+            image_indices,
             frame,
             layout,
             painter,
@@ -127,6 +156,18 @@ impl Window {
         })
     }
     fn tick(&mut self) -> Result<(), Error> {
+        let started = trueos::clock::Instant::now();
+        if self
+            .images
+            .poll(&self.resources, self.device, &mut self.layout)?
+        {
+            if !self.layout.resolve(0.0)? {
+                return Ok(());
+            }
+            self.mesh = self.painter.paint(self.layout.document())?;
+            self.dirty = true;
+            self.uploaded = false;
+        }
         while let Some(event) = self.frame.take_resize_event()? {
             self.resize = Some(event);
         }
@@ -162,10 +203,13 @@ impl Window {
         if !self.dirty {
             return Ok(());
         }
+        let upload_started = trueos::clock::Instant::now();
         if !self.uploaded {
             self.upload()?;
             self.uploaded = true;
         }
+        let upload_us = upload_started.elapsed().as_micros();
+        let render_started = trueos::clock::Instant::now();
         self.frame.begin_gpu_frame()?;
         let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
         let mut batch = vgpu::IndexedDrawBatchV2 {
@@ -193,10 +237,12 @@ impl Window {
             batch,
         )?;
         self.device.wait(self.queue, point.value)?;
+        let image_draws = self.draw_images()?;
+        let render_us = render_started.elapsed().as_micros();
         self.frame
             .publish(Damage::full(self.frame.width(), self.frame.height()))?;
         crate::parser_probe::report_info(format_args!(
-            "solara: native-frame window={} boxes={} glyphs={} cached_glyphs={} vertices={} triangles={} lines={} scroll_y={} timeline={}",
+            "solara: native-frame window={} boxes={} glyphs={} cached_glyphs={} vertices={} triangles={} lines={} scroll_y={} timeline={} image_draws={} upload_us={} render_us={} frame_us={}",
             self.frame.window_id(),
             self.mesh.boxes,
             self.mesh.glyphs,
@@ -205,10 +251,63 @@ impl Window {
             self.mesh.triangles.len() / 3,
             self.mesh.lines.len() / 2,
             self.scroll_y,
-            point.value
+            point.value,
+            image_draws,
+            upload_us,
+            render_us,
+            started.elapsed().as_micros()
         ));
         self.dirty = false;
         Ok(())
+    }
+    fn draw_images(&mut self) -> Result<usize, Error> {
+        let w = self.frame.width() as f32;
+        let h = self.frame.height() as f32;
+        let mut count = 0;
+        for image in &self.mesh.images {
+            if !image.visible(w, h, self.scroll_y) {
+                continue;
+            }
+            let Some(texture) = self.images.textures.get(&image.url) else {
+                continue;
+            };
+            let mut bytes = Vec::with_capacity(80);
+            for (position, uv) in image.corners.iter().zip(image.uv) {
+                for value in [
+                    2.0 * position[0] / w - 1.0,
+                    1.0 - 2.0 * (position[1] - self.scroll_y) / h,
+                    0.0,
+                    uv[0],
+                    uv[1],
+                ] {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            if self.device.write_buffer(self.image_vertices, 0, &bytes)? != bytes.len() {
+                return Err(Error::Other("short image quad upload".into()));
+            }
+            let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
+            let point = self.device.submit_ui4_indexed(
+                self.queue,
+                surface,
+                self.image_pipeline,
+                self.image_vertices,
+                self.image_indices,
+                vgpu::IndexedDraw {
+                    index_count: 6,
+                    sampled_texture: texture.buffer.raw(),
+                    texture_width: texture.width,
+                    texture_height: texture.height,
+                    texture_pitch: texture.pitch,
+                    sampler_flags: vgpu::SAMPLER_MAG_LINEAR | vgpu::SAMPLER_MIN_LINEAR,
+                    texture_reserved: vgpu::INDEXED_DRAW_LOAD_COLOR,
+                    ..Default::default()
+                },
+            )?;
+            self.device.wait(self.queue, point.value)?;
+            count += 1;
+        }
+        Ok(count)
     }
     fn upload(&mut self) -> Result<(), Error> {
         let w = self.frame.width() as f32;
@@ -307,6 +406,11 @@ impl Window {
 }
 impl Drop for Window {
     fn drop(&mut self) {
+        self.images.release(self.device);
+        let _ = self.device.destroy_buffer(self.image_vertices);
+        let _ = self.device.destroy_buffer(self.image_indices);
+        let _ = self.device.destroy_render_pipeline(self.image_pipeline);
+        let _ = self.device.destroy_shader_module(self.image_shader);
         if let Some(v) = self.vertices.take() {
             let _ = self.device.destroy_buffer(v);
         }
@@ -347,13 +451,25 @@ pub(crate) fn run(page: Option<(&str, &str)>) -> Result<(), String> {
     let mut windows = Vec::new();
     for (index, (url, html)) in sources.iter().enumerate() {
         let artifact = engine.parse(html, url).map_err(|e| e.to_string())?;
-        let (layout, missing) = crate::layout_probe::layout_artifact(&artifact)?;
+        let resources = Arc::new(Resources::default());
+        let layout = SpecLayout::from_artifact(
+            &artifact,
+            solara::spec_layout::DocumentConfig {
+                viewport: Some(Viewport {
+                    window_size: (width, height),
+                    ..Default::default()
+                }),
+                font_ctx: Some(solara::spec_layout::bundled_font_context()),
+                net_provider: Some(resources.clone()),
+                ..Default::default()
+            },
+        )?;
         let x = 12 + (index as u32 % 2) * (width + 12);
         let y = 12 + (index as u32 / 2) * (height + 12);
-        let window =
-            Window::open(layout, x as i32, y as i32, width, height).map_err(|e| e.to_string())?;
+        let window = Window::open(layout, resources, x as i32, y as i32, width, height)
+            .map_err(|e| e.to_string())?;
         crate::parser_probe::report_info(format_args!(
-            "solara: native-open url={url} window={} size={width}x{height} unavailable_resources={missing}",
+            "solara: native-open url={url} window={} size={width}x{height}",
             window.frame.window_id()
         ));
         windows.push(window);
