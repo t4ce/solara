@@ -3,7 +3,7 @@ name = "solara"
 version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
-description = "TRUEOS-first HTML/CSS parsing and retained standards-based layout."
+description = "TRUEOS HTML/CSS layout with a native UI4 text and line view."
 default-run = "solara"
 readme = "README.md"
 license = "MIT"
@@ -48,13 +48,16 @@ blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb
 blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb4cac697b763f8f5d01ee83cefb", default-features = false, optional = true }
 parley = { version = "=0.11.1", default-features = false, features = ["std"], optional = true }
 linebender_resource_handle = { version = "0.1", optional = true }
+# Already present through Parley; expose its outline reader to the native painter.
+skrifa = { version = "=0.44.0", optional = true }
 
 [features]
 default = ["spec-layout"]
-spec-layout = ["dep:blitz-dom", "dep:blitz-traits", "dep:parley", "dep:linebender_resource_handle"]
+spec-layout = ["dep:blitz-dom", "dep:blitz-traits", "dep:parley", "dep:linebender_resource_handle", "dep:skrifa"]
 # TRUEOS selects its own host services. The default spec-layout feature adds
 # measured layout to the handoff; --no-default-features retains the parse probe.
-# Neither path selects a renderer or general page-script scheduling.
+# On TRUEOS, spec-layout also selects the native text/line UI4 view.
+# The host probe stays headless; neither path adds general page-script scheduling.
 trueos-first = []
 
 [[bin]]

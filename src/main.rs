@@ -2,6 +2,8 @@
 
 #[cfg(feature = "spec-layout")]
 mod layout_probe;
+#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+mod native_window;
 mod page_script;
 mod parser_probe;
 mod run_script;
@@ -14,10 +16,16 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let Some(request) = run_script::read()? else {
+        #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+        return native_window::run(None);
+        #[cfg(not(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm"))))]
         return parser_probe::run();
     };
 
     let html = read_source(&request.source)?;
+    #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+    return native_window::run(Some((request.url.as_str(), &html)));
+    #[cfg(not(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm"))))]
     parser_probe::run_page(request.url.as_str(), &html)
 }
 

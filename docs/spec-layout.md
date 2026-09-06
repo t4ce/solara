@@ -129,9 +129,14 @@ hardware execution and native performance require the TRUEOS toolchain/runtime;
 they are not established by these host tests. The parser-only fallback remains
 available using `--no-default-features`.
 
-## Next native boundary
+## Initial native view
 
-Add a Picasso backend for the resolved document's painting operations. Retain
+The TRUEOS binary now reads this resolved document directly in `native_paint.rs`
+and submits text triangles and box line lists through `native_window.rs` to UI4.
+The headless host probe and tests stay separate. See the README for the exact
+diagnostic scope; this is not full CSS painting or native SceneDB publication.
+
+Remaining painting work: extend the native view for the document's painting operations. Retain
 glyph/path geometry, stable fragment identities, clip ancestry and painter
 order. Include small-text antialiasing in the first visual proof. CSS borders,
 group opacity and general affine transforms must be lowered according to the

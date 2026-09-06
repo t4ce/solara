@@ -1,10 +1,10 @@
 # Repository Guidelines
 
-> Branch note (`true`): the active Solara binary is a renderer-free RustQJSDom
-> parse + Blitz/Stylo layout probe (default `spec-layout` feature). Direct starts
-> use the five-page corpus; Shell2 `surf` launches parse and lay out one staged
-> page selected by `vFile:launch`. Do not assume the legacy
-> WGPU, Linux window, UI4 frame, or Picasso presentation paths are active.
+> Branch note (`true`): Linux retains the headless RustQJSDom + Blitz/Stylo
+> probe. On TRUEOS the default `spec-layout` feature opens four UI4 text/line
+> demo frames, or one staged page selected by `vFile:launch`. `native_paint.rs`
+> and `native_window.rs` provide the new native path. The legacy `gpu_ui/`,
+> WGPU and Linux window paths remain inactive.
 
 ## Project Structure & Module Organization
 
@@ -12,7 +12,8 @@ Solara is a Rust 2024 experimental browser project. `src/main.rs` and
 `src/parser_probe.rs` embed five documents, reuse one RustQJSDom runtime, and
 report each validated artifact and its measured boxes/glyphs. `src/spec_layout/`
 owns the retained Blitz document; `src/layout_probe.rs` supplies corpus resources.
-Historical
+`src/native_paint.rs` converts resolved boxes and glyphs into geometry, while
+`src/native_window.rs` owns UI4 windows and native indexed submission. Historical
 browser work remains under `src/gpu_ui/`, including HTML parsing, layout, and
 painting experiments, but it is not declared as a module or compiled. The
 former WGPU shim crate and shader sources have been removed; its bundled font
@@ -40,7 +41,7 @@ Use `rustfmt` defaults (four-space indentation) and keep modules focused on one 
 
 Add focused unit tests in a colocated `#[cfg(test)] mod tests`. Use descriptive
 names and add integration tests under `tests/` when behavior crosses module
-boundaries. Until a renderer is deliberately reintroduced, validate that all
+boundaries. Keep host tests headless and separate from the native demo. Validate that all
 five artifacts reach the handoff with measured text/boxes and that the dependency
 graph remains free of WGPU and Winit. `tests/spec_layout.rs` checks reflow, style
 invalidation, original stylesheet ordering, retained fonts and animation sampling.

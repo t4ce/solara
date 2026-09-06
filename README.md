@@ -2,14 +2,15 @@
 
 Solara is a TRUEOS browser project. The current milestone parses HTML/CSS and
 computes retained layout using Blitz, Stylo, Taffy and Parley. It also has a
-bounded first page-script proof and a Shell2 `surf` launch path. Rendering and
-Picasso scene publication are the next boundary.
+bounded first page-script proof and a Shell2 `surf` launch path. On TRUEOS it
+now presents a native text-and-lines view in UI4 through the existing indexed
+render path used by PotatoStamps.
 
 The goal is faithful rendering of selected modern CSS frameworks and a useful
 browser API surface on TRUEOS/Solara. This is not a cross-platform browser shell
 or a plan to reproduce every Chrome/Firefox feature.
 
-> Current status: Solara initializes one QuickJS-backed RustQJSDom engine,
+> Linux host probe: Solara initializes one QuickJS-backed RustQJSDom engine,
 > parses five embedded documents through Parse5 and Lightning CSS, logs each
 > validated handoff, executes at most the first supported classic script per
 > page, imports the original DOM into Blitz, resolves styles and measured
@@ -20,7 +21,7 @@ When Shell2 launches Solara through `surf <url>`, it supplies a one-shot run
 script containing the canonical page URL and the TRUEOSFS path of the staged
 HTML. Solara validates the HTTP(S) URL with the Rust `url` crate, reads that
 single document, parses and lays it out without executing network page scripts,
-and exits. Its resource loader still serves only the embedded corpus; unavailable
+and opens a UI4 frame. Its resource loader still serves only the embedded corpus; unavailable
 resources are reported and this path is not a complete network page render.
 
 ## Current boundary
@@ -30,15 +31,35 @@ The default `spec-layout` feature adds a live Blitz document to the validated
 elements, inline CSS and stylesheet links feed Stylo. Taffy and Parley provide
 measured boxes and shaped text. The parser's `styleIndex` remains a diagnostic
 snapshot and is not flattened into inline styles. `layout-ready` logs actual
-layout counts separately from parsing. Neither stage presents a window or
-publishes a Picasso scene.
+layout counts separately from parsing. On TRUEOS, `native_paint.rs` reads the
+resolved document directly and `native_window.rs` submits its geometry to UI4.
 
 See [`docs/spec-layout.md`](docs/spec-layout.md) for the Rust boundary,
 dependency pins, host resource contract, validation and remaining native work.
 Use `--no-default-features` to run the original parser-only probe.
 
-The five-page corpus is used when Solara starts without a run script. A
-Shell2 `surf` launch parses only the staged page named by its run script.
+On the Linux host, a direct run keeps the five-page headless corpus. On TRUEOS,
+a direct run opens four independent, tiled UI4 frames: `FrameworkLayout.html`,
+`TextAndBorders.html`, `DivsAndPanels.html`, and `FlowAndForms.html`. A `surf`
+launch opens the staged page through exactly the same drawing path.
+
+The first view uses pale glyph meshes and cyan box edges on a dark background.
+Glyph positions, font bytes, sizes, variation coordinates and synthetic slant
+come from Parley. Outlines use the existing Skrifa dependency; the small TRUEOS
+path fill helper is copied locally for Blueprint packaging. Native line lists
+close each box. Geometry stays resident while idle; wheel/middle-button pan
+updates the projection, and UI4 resize events trigger Blitz reflow with cached
+glyph outlines. Only viewport-intersecting primitives are uploaded, with compact
+line vertices to avoid the broker copying text into line draws. Draws are split
+into at most 12,288 indices each so the broker can use small contiguous DMA
+allocations, still within one native batch submission per frame. A fatal draw
+error is reported per window and leaves the other windows live. No FontCanvas, glyph sprites, WGPU or Winit are used.
+
+This is a diagnostic view: authored fills/colors, rounded borders, nested overflow
+clipping, form-control text, and full paint/compositing order are not implemented.
+Text uses the existing native triangle rasterizer without a new antialiasing
+pass. QJS interaction and continuous animation are subsequent work. The window
+loop only draws when geometry or scrolling changes.
 
 The embedded corpus is:
 
@@ -146,3 +167,12 @@ the platform's custom toolchain and native build/presentation validation.
 ## License
 
 Solara is licensed under the [MIT License](LICENSE). The vendored RustQJSDom component retains its own license and third-party notices under `vendor/RustQJSDom`.
+
+## Native visual check
+
+On 2026-09-06 the four default documents all published native GPU frames on the
+physical rig, and a fresh WD post-blend screenshot confirmed the four tiled
+text/contour views. The Blueprint build and 15 host tests passed. The internal
+`solara-native` app entry runs this visual build without replacing the installed
+Solara entry. The earlier large FlowAndForms draw hit GPU `-12`; compact
+viewport geometry and bounded indexed draws allowed all four frames to render.
