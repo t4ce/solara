@@ -299,7 +299,7 @@ impl Window {
                     texture_width: texture.width,
                     texture_height: texture.height,
                     texture_pitch: texture.pitch,
-                    sampler_flags: vgpu::SAMPLER_MAG_LINEAR | vgpu::SAMPLER_MIN_LINEAR,
+                    sampler_flags: vgpu::SAMPLER_ADDRESS_U_REPEAT | vgpu::SAMPLER_ADDRESS_V_REPEAT,
                     texture_reserved: vgpu::INDEXED_DRAW_LOAD_COLOR,
                     ..Default::default()
                 },
@@ -316,6 +316,7 @@ impl Window {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let mut draws = Vec::new();
+        let mut remap = vec![(u32::MAX, 0u32); visible.vertices.len()];
         // The broker materializes each draw in contiguous DMA storage. Bound
         // each allocation, and use base_vertex so it copies only that draw.
         for (source, color, topology) in [
@@ -334,17 +335,19 @@ impl Window {
                 }
                 let base_vertex = (vertices.len() / 12) as i32;
                 let first_index = (indices.len() / 4) as u32;
-                let mut remap = std::collections::BTreeMap::new();
+                let stamp = draws.len() as u32;
+                let mut next = 0u32;
                 for index in chunk {
-                    let next = remap.len() as u32;
-                    let mapped = *remap.entry(*index).or_insert_with(|| {
+                    let slot = &mut remap[*index as usize];
+                    if slot.0 != stamp {
                         let [x, y] = visible.vertices[*index as usize];
                         for v in [2.0 * x / w - 1.0, 1.0 - 2.0 * (y - self.scroll_y) / h, 0.0] {
                             vertices.extend_from_slice(&v.to_le_bytes());
                         }
-                        next
-                    });
-                    indices.extend_from_slice(&mapped.to_le_bytes());
+                        *slot = (stamp, next);
+                        next += 1;
+                    }
+                    indices.extend_from_slice(&slot.1.to_le_bytes());
                 }
                 draws.push(vgpu::IndexedBatchDrawV2 {
                     index_count: chunk.len() as u32,

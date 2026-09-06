@@ -59,7 +59,29 @@ This is a diagnostic view: authored fills/colors, rounded borders, nested overfl
 clipping, form-control text, and full paint/compositing order are not implemented.
 Text uses the existing native triangle rasterizer without a new antialiasing
 pass. QJS interaction and continuous animation are subsequent work. The window
-loop only draws when geometry or scrolling changes.
+loop only draws when geometry, image readiness or scrolling changes.
+
+JPEG `<img>` assets (`.jpg`/`.jpeg`, including URL query strings) now use async
+kernel HTTP fetch and `vmedia` decoding. Solara does not include a JPEG decoder.
+Decoded dimensions enter Blitz's normal image completion/reflow, and the painter
+submits position+UV triangles through the existing sampled Picasso shader. Images
+respect the content box, transforms and `object-fit` (fill/contain/cover/none/
+scale-down); simple percentage/pixel `object-position` is supported. Background
+images, masks, nested overflow clipping and full DOM painter order remain outside
+this diagnostic view. Images currently follow the text/line batch.
+
+The kernel's `INDEXED_DRAW_LOAD_COLOR` continuation preserves that batch and keeps
+an immutable sampled texture cached for each MAP_WRITE-only pixel buffer. A pixel
+write invalidates the cache, and buffer destruction releases it. This first path
+uses the decoder's RGBA readback once and retains it in Blitz plus a GPU buffer;
+it does not yet use the separate vmedia Render1 retained-texture handle contract.
+Scrolling changes geometry, not pixels. The renderer's proven nearest/repeat
+sampler is used. A matching kernel is required for the continuation flag.
+
+The FrameworkLayout demo reuses one embedded JPEG above and below the fold,
+plus the W3C JPEG-format example fetched over HTTPS. Native
+frame logs include geometry upload, render and total frame timings. Idle windows
+do not submit frames; resize triggers layout while scrolling reuses glyph meshes.
 
 The embedded corpus is:
 

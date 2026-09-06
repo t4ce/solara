@@ -124,9 +124,18 @@ impl Images {
             match result {
                 Ok(decoded) => {
                     let info = decoded.info;
-                    let buffer = device
+                    let buffer = match device
                         .create_buffer(decoded.rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)
-                        .map_err(|e| format!("image allocation: {e}"))?;
+                    {
+                        Ok(buffer) => buffer,
+                        Err(error) => {
+                            crate::parser_probe::report_error(format_args!(
+                                "solara: image-failed url={} allocation={error}",
+                                pending.url
+                            ));
+                            continue;
+                        }
+                    };
                     match device.write_buffer(buffer, 0, &decoded.rgba) {
                         Ok(n) if n == decoded.rgba.len() => {}
                         result => {
