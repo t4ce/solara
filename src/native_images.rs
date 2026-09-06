@@ -109,15 +109,18 @@ impl Drop for Fetch {
 /// Poll the kernel's HTTP/HTTPS operation; dropping discards its result slot.
 /// The current GET ABI may finish transport in the background after discard.
 pub(crate) async fn fetch_bytes(url: String) -> Result<Vec<u8>, String> {
+    fetch_bytes_limited(url, 8 * 1024 * 1024).await
+}
+pub(crate) async fn fetch_bytes_limited(url: String, max_bytes: usize) -> Result<Vec<u8>, String> {
     let fetch = Fetch(netfs::fetch_bytes(url.as_bytes()).map_err(|e| format!("fetch start: {e}"))?);
     let started = trueos::clock::monotonic_millis();
     poll_fn(|cx| match netfs::fetch_bytes_result_len(fetch.0) {
-        Err(-8) if trueos::clock::monotonic_millis().saturating_sub(started) < 30_000 => {
+        Err(-8) if trueos::clock::monotonic_millis().saturating_sub(started) < 46_000 => {
             cx.waker().wake_by_ref();
             Poll::Pending
         }
         Err(e) => Poll::Ready(Err(format!("fetch: {e}"))),
-        Ok(len) if len > 16 * 1024 * 1024 => Poll::Ready(Err("resource exceeds 16 MiB".into())),
+        Ok(len) if len > max_bytes => Poll::Ready(Err("resource exceeds byte limit".into())),
         Ok(_) => {
             Poll::Ready(netfs::fetch_bytes_read(fetch.0).map_err(|e| format!("fetch read: {e}")))
         }
