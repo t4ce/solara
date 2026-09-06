@@ -96,7 +96,10 @@ mod tests {
             request.url.as_str(),
             "https://example.com/page?q=hello%20world"
         );
-        assert_eq!(request.source.as_deref(), Some("apps/common/solara/surf/surf-1.html"));
+        assert_eq!(
+            request.source.as_deref(),
+            Some("apps/common/solara/surf/surf-1.html")
+        );
     }
 
     #[test]

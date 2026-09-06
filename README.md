@@ -17,12 +17,29 @@ or a plan to reproduce every Chrome/Firefox feature.
 > boxes/glyphs at 1280x800, and exits. Every script tag remains preserved; later
 > scripts, modules, import maps, and data scripts remain inert.
 
-When Shell2 launches Solara through `surf <url>`, it supplies a one-shot run
-script containing the canonical page URL and the TRUEOSFS path of the staged
-HTML. Solara validates the HTTP(S) URL with the Rust `url` crate, reads that
-single document, parses and lays it out without executing network page scripts,
-and opens a UI4 frame. Its resource loader still serves only the embedded corpus; unavailable
-resources are reported and this path is not a complete network page render.
+`surf` opens a single Solara tab with the bundled [`docs/home.html`](docs/home.html)
+logo page. `surf <url>` starts that tab at an HTTP(S) address. Shell2 only launches
+Solara; the running Blueprint owns subsequent requests and document replacement.
+One VMX context, one retained QuickJS runtime and one UI4 window stay alive across
+navigation. Submitting another address discards the previous pending result and
+resets scrolling when the new document is ready. The current kernel GET ABI may
+finish the superseded transport in the background.
+
+A minimal terminal navigator uses the same terminal lease and Crossterm backend
+as Texplo. Type an address and press **Enter**. The **HTTP/HTTPS** toggle sits to
+its right: **Tab** focuses it and **Space/Enter** changes it, or **F2** toggles
+from either field. Bare addresses use the selected protocol (HTTPS initially);
+a pasted full URL supplies its own protocol. **Ctrl-L** selects the address.
+**Esc** parks the navigator in Shell2 while the page stays alive; **vmx_tui**
+reopens it. **Ctrl-Q** closes this Solara instance.
+
+HTML and linked resources use the existing asynchronous kernel HTTP/HTTPS ABI.
+Failed navigation leaves the prior document available and reports the error in
+the terminal. Network page scripts remain inert; this first navigator does not
+add link activation, history, additional tabs, or browser JavaScript APIs.
+The page fetch currently accepts UTF-8 HTML up to 16 MiB; the ABI does not expose
+a redirect's final URL, so relative resources use the requested page URL.
+Legacy `open URL` plus `source PATH` launch scripts remain readable.
 
 ## Current boundary
 
@@ -39,9 +56,9 @@ dependency pins, host resource contract, validation and remaining native work.
 Use `--no-default-features` to run the original parser-only probe.
 
 On the Linux host, a direct run keeps the five-page headless corpus. On TRUEOS,
-a direct run opens four independent, tiled UI4 frames: `FrameworkLayout.html`,
-`TextAndBorders.html`, `DivsAndPanels.html`, and `FlowAndForms.html`. A `surf`
-launch opens the staged page through exactly the same drawing path.
+a direct run opens the single-tab navigator. The explicit `native-demos` feature
+retains four independent, tiled UI4 frames: `FrameworkLayout.html`,
+`TextAndBorders.html`, `DivsAndPanels.html`, and `FlowAndForms.html`. Navigation uses the same drawing path.
 
 The first view uses pale glyph meshes and cyan box edges on a dark background.
 Glyph positions, font bytes, sizes, variation coordinates and synthetic slant

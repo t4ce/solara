@@ -540,7 +540,7 @@ impl Window {
     }
 }
 
-pub(crate) fn run_browser(initial: Option<crate::run_script::OpenRequest>) -> Result<(), String> {
+pub(crate) fn run_browser() -> Result<(), String> {
     use crate::native_tui::{Action, Navigator};
     use std::{
         future::Future,
@@ -548,6 +548,7 @@ pub(crate) fn run_browser(initial: Option<crate::run_script::OpenRequest>) -> Re
         task::{Context, Poll, Waker},
     };
     let mut navigator = Navigator::new().map_err(|e| format!("navigator: {e}"))?;
+    let initial = crate::run_script::read()?;
     let mut engine =
         DomEngine::with_stylesheet_loader(crate::parser_probe::load_embedded_stylesheet)
             .map_err(|e| e.to_string())?;
@@ -566,30 +567,28 @@ pub(crate) fn run_browser(initial: Option<crate::run_script::OpenRequest>) -> Re
     )?;
     let mut window =
         Window::open(layout, resources, 40, 50, width, height).map_err(|e| e.to_string())?;
+    crate::parser_probe::report_info(format_args!(
+        "solara: browser-open window={} url=trueos://solara/home",
+        window.frame.window_id()
+    ));
     navigator.status("Home");
     type FetchPage = Pin<Box<dyn Future<Output = Result<Vec<u8>, String>>>>;
     let mut fetching: Option<(url::Url, FetchPage)> = None;
     let mut styling: Option<(url::Url, SpecLayout, Arc<Resources>)> = None;
-    let mut requested = initial
-        .map(|r| {
-            if let Some(source) = r.source {
-                match crate::read_source(&source) {
-                    Ok(html) => {
-                        match page_layout(&mut engine, r.url.as_str(), &html, width, height) {
-                            Ok((layout, resources)) => {
-                                styling = Some((r.url.clone(), layout, resources))
-                            }
-                            Err(error) => navigator.status(error),
-                        }
-                    }
+    let mut requested = initial.and_then(|r| {
+        if let Some(source) = r.source {
+            match crate::read_source(&source) {
+                Ok(html) => match page_layout(&mut engine, r.url.as_str(), &html, width, height) {
+                    Ok((layout, resources)) => styling = Some((r.url.clone(), layout, resources)),
                     Err(error) => navigator.status(error),
-                }
-                None
-            } else {
-                Some(r.url)
+                },
+                Err(error) => navigator.status(error),
             }
-        })
-        .flatten();
+            None
+        } else {
+            Some(r.url)
+        }
+    });
     loop {
         trueos::vsys::poll_once();
         match navigator.tick().map_err(|e| format!("navigator: {e}"))? {
@@ -633,23 +632,35 @@ pub(crate) fn run_browser(initial: Option<crate::run_script::OpenRequest>) -> Re
                 Err(error) => navigator.status(format!("Could not open {url}: {error}")),
             }
         }
-        if let Some((_, layout, resources)) = &mut styling {
+        let ready = styling.as_mut().map(|(_, layout, resources)| {
             resources.poll()?;
             // Resizes during the fetch must be reflected in the arriving page.
             layout.set_viewport(Viewport {
                 window_size: (window.frame.width(), window.frame.height()),
                 ..Default::default()
             })?;
-            if layout.resolve(0.0)? {
+            layout.resolve(0.0)
+        });
+        match ready {
+            Some(Ok(true)) => {
                 let (url, layout, resources) = styling.take().expect("resolved page");
                 match window.navigate(layout, resources) {
                     Ok(()) => {
                         navigator.location(&url);
                         navigator.status(format!("Loaded {url}"));
+                        crate::parser_probe::report_info(format_args!(
+                            "solara: navigation-loaded window={} url={url}",
+                            window.frame.window_id()
+                        ));
                     }
                     Err(error) => navigator.status(format!("Layout failed: {error}")),
                 }
             }
+            Some(Err(error)) => {
+                styling = None;
+                navigator.status(format!("Layout failed: {error}"));
+            }
+            _ => {}
         }
         if !window.failed
             && let Err(error) = window.tick()

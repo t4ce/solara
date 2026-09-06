@@ -105,7 +105,8 @@ impl Drop for Fetch {
         let _ = netfs::fetch_bytes_discard(self.0);
     }
 }
-/// Poll the kernel's existing HTTP/HTTPS operation; dropping cancels it.
+/// Poll the kernel's HTTP/HTTPS operation; dropping discards its result slot.
+/// The current GET ABI may finish transport in the background after discard.
 pub(crate) async fn fetch_bytes(url: String) -> Result<Vec<u8>, String> {
     let fetch = Fetch(netfs::fetch_bytes(url.as_bytes()).map_err(|e| format!("fetch start: {e}"))?);
     let started = trueos::clock::monotonic_millis();

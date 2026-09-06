@@ -1,8 +1,9 @@
 # Repository Guidelines
 
 > Branch note (`true`): Linux retains the headless RustQJSDom + Blitz/Stylo
-> probe. On TRUEOS the default `spec-layout` feature opens four UI4 text/line
-> demo frames, or one staged page selected by `vFile:launch`. `native_paint.rs`
+> probe. On TRUEOS the default `spec-layout` feature opens one UI4 browser tab
+> with a terminal navigator and bundled logo page; `native-demos` selects the
+> separate four-frame corpus. Navigation stays inside the same VMX/QJS instance. `native_paint.rs`
 > and `native_window.rs` provide the new native path. The legacy `gpu_ui/`,
 > WGPU and Linux window paths remain inactive.
 

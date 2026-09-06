@@ -24,7 +24,7 @@ fn run() -> Result<(), String> {
         #[cfg(feature = "native-demos")]
         return native_window::run(None);
         #[cfg(not(feature = "native-demos"))]
-        return native_window::run_browser(run_script::read()?);
+        return native_window::run_browser();
     }
     #[cfg(not(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm"))))]
     {
