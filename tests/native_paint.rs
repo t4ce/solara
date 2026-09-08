@@ -59,7 +59,7 @@ fn document(html: &str) -> SpecLayout {
 }
 
 #[test]
-fn all_four_documents_have_native_text_and_closed_box_edges() {
+fn all_four_documents_have_native_text_and_css_solids() {
     for (name, html) in [
         ("framework", include_str!("../docs/FrameworkLayout.html")),
         ("text", include_str!("../docs/TextAndBorders.html")),
@@ -72,12 +72,11 @@ fn all_four_documents_have_native_text_and_closed_box_edges() {
         assert!(mesh.glyphs > 0, "{name}");
         assert!(!mesh.triangles.is_empty(), "{name}");
         assert!(mesh.boxes > 0, "{name}");
-        assert_eq!(mesh.lines.len(), mesh.boxes * 8);
+        assert_eq!(mesh.triangle_colors.len() * 3, mesh.triangles.len());
         assert_eq!(mesh.triangles.len() % 3, 0);
         assert!(
             mesh.triangles
                 .iter()
-                .chain(&mesh.lines)
                 .all(|i| (*i as usize) < mesh.vertices.len())
         );
         let cached = painter.cached_glyphs();
@@ -85,28 +84,7 @@ fn all_four_documents_have_native_text_and_closed_box_edges() {
         assert_eq!(cached, painter.cached_glyphs());
         assert_eq!(mesh.vertices, again.vertices);
         if let Ok(dir) = std::env::var("SOLARA_MESH_PREVIEW_DIR") {
-            use std::fmt::Write;
-            let mut svg = String::from(
-                "<svg xmlns='http://www.w3.org/2000/svg' width='960' height='640' viewBox='0 0 960 640'><rect width='960' height='640' fill='#0d121b'/><g stroke='#4197ae' stroke-width='3'>",
-            );
-            for e in mesh.lines.as_chunks::<2>().0.iter() {
-                let a = mesh.vertices[e[0] as usize];
-                let b = mesh.vertices[e[1] as usize];
-                write!(svg, "<path d='M{},{} L{},{}'/>", a[0], a[1], b[0], b[1]).unwrap();
-            }
-            svg.push_str("</g><path fill='#e5edf8' d='");
-            for t in mesh.triangles.as_chunks::<3>().0.iter() {
-                let a = mesh.vertices[t[0] as usize];
-                let b = mesh.vertices[t[1] as usize];
-                let c = mesh.vertices[t[2] as usize];
-                write!(
-                    svg,
-                    "M{},{} L{},{} {},{} Z ",
-                    a[0], a[1], b[0], b[1], c[0], c[1]
-                )
-                .unwrap();
-            }
-            svg.push_str("'/></svg>");
+            let svg = mesh.svg_preview(960, 640, 0.0);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(format!("{dir}/{name}.svg"), svg).unwrap();
         }
@@ -169,11 +147,10 @@ fn viewport_compacts_visible_primitives_and_scroll_reveals_the_rest() {
     assert!(first.triangles.len() < mesh.triangles.len());
     assert!(second.triangles.len() < mesh.triangles.len());
     for view in [first, second] {
-        assert!(view.lines.iter().all(|index| *index < 100));
+        assert_eq!(view.triangle_colors.len() * 3, view.triangles.len());
         assert!(
             view.triangles
                 .iter()
-                .chain(&view.lines)
                 .all(|index| (*index as usize) < view.vertices.len())
         );
     }
@@ -323,12 +300,12 @@ fn button_hover_uses_css_cascade_and_retained_glyphs() {
     let hovered = painter.paint(layout.document()).unwrap();
     assert_eq!(initial.vertices, hovered.vertices);
     assert_eq!(cached, painter.cached_glyphs());
-    assert_ne!(initial.line_colors, hovered.line_colors);
+    assert_ne!(initial.triangle_colors, hovered.triangle_colors);
     let clipped = hovered.viewport(960.0, 640.0, 0.0);
-    assert_eq!(clipped.line_colors.len() * 2, clipped.lines.len());
+    assert_eq!(clipped.triangle_colors.len() * 3, clipped.triangles.len());
     assert!(
         clipped
-            .line_colors
+            .triangle_colors
             .contains(&u32::from_le_bytes([229, 237, 248, 255]))
     );
     assert!(!layout.pointer_move(Some([81.0, 40.0]), 0.0));
@@ -426,4 +403,119 @@ fn disclosures_collapse_reflow_and_activate_after_scrolling() {
         panic!("missing disclosure glyph")
     };
     assert_ne!(run.positioned_glyphs().next().unwrap().id, 0);
+}
+
+fn pixel(mesh: &solara::native_paint::PageMesh, p: [f32; 2]) -> u32 {
+    let mut color = mesh.canvas_color;
+    for (triangle, &fill) in mesh.triangles.chunks_exact(3).zip(&mesh.triangle_colors) {
+        let points = triangle
+            .iter()
+            .map(|&i| mesh.vertices[i as usize])
+            .collect::<Vec<_>>();
+        let cross = |a: [f32; 2], b: [f32; 2]| {
+            (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+        };
+        let signs = [
+            cross(points[0], points[1]),
+            cross(points[1], points[2]),
+            cross(points[2], points[0]),
+        ];
+        if (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0))
+            && signs.iter().any(|v| v.abs() > 0.001)
+        {
+            color = fill;
+        }
+    }
+    color
+}
+
+#[test]
+fn css_panels_borders_and_nested_overflow_keep_paint_order() {
+    let layout = document(
+        r#"<style>
+        body { margin:0;background:#fff }
+        #panel { position:relative; width:100px;height:100px;background:#f00;overflow:hidden }
+        #child { position:absolute;left:20px;top:20px;width:50px;height:150px;background:#00f }
+        #overlay { position:absolute;left:30px;top:30px;width:30px;height:30px;background:#0f0 }
+        #border { position:absolute;left:150px;top:0;width:60px;height:60px;box-sizing:border-box;
+            background:#f00;border:8px solid #00f;border-radius:20px }
+        .sr { position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden;white-space:nowrap }
+        </style><div id='panel'><div id='child'></div></div><div id='overlay'></div><div id='border'></div>
+        <div class='sr'>This accessibility label must not leak into the page.</div>"#,
+    );
+    let mesh = Painter::default().paint(layout.document()).unwrap();
+    assert_eq!(pixel(&mesh, [10.0, 12.0]), 0xff0000ff);
+    assert_eq!(pixel(&mesh, [25.0, 27.0]), 0xffff0000);
+    assert_eq!(pixel(&mesh, [35.0, 37.0]), 0xff00ff00);
+    assert_eq!(pixel(&mesh, [25.0, 110.0]), 0xffffffff);
+    assert_eq!(pixel(&mesh, [151.0, 1.0]), 0xffffffff);
+    assert_eq!(pixel(&mesh, [180.0, 3.0]), 0xffff0000);
+    assert_eq!(pixel(&mesh, [180.0, 30.0]), 0xff0000ff);
+    assert!(
+        mesh.triangle_colors
+            .iter()
+            .all(|c| [0xff0000ff, 0xffff0000, 0xff00ff00].contains(c))
+    );
+    let view = mesh.viewport(300.0, 200.0, 0.0);
+    assert_eq!(pixel(&view, [35.0, 37.0]), pixel(&mesh, [35.0, 37.0]));
+    assert_eq!(
+        view.color_runs()
+            .map(|(indices, _)| indices.len())
+            .sum::<usize>(),
+        view.triangles.len()
+    );
+}
+
+#[test]
+fn paint_order_uses_stacking_contexts_and_live_dom_order() {
+    let mut layout = document(
+        r#"<style>
+        body{margin:0} .box{position:absolute;left:10px;top:10px;width:100px;height:100px}
+        #front{background:#f00;z-index:3} #back{background:#00f;z-index:1}
+        </style><div class='box' id='front'></div><div class='box' id='back'></div>"#,
+    );
+    let mut painter = Painter::default();
+    assert_eq!(
+        pixel(&painter.paint(layout.document()).unwrap(), [40.0, 45.0]),
+        0xff0000ff
+    );
+    let front = layout.document().get_element_by_id("front").unwrap();
+    let back = layout.document().get_element_by_id("back").unwrap();
+    let style = blitz_dom::QualName::new(None, "".into(), "style".into());
+    layout
+        .mutate()
+        .set_attribute(front, style.clone(), "z-index:auto");
+    layout.mutate().set_attribute(back, style, "z-index:auto");
+    layout.resolve(0.0).unwrap();
+    assert_eq!(
+        pixel(&painter.paint(layout.document()).unwrap(), [40.0, 45.0]),
+        0xffff0000
+    );
+    layout.mutate().insert_nodes_before(front, &[back]);
+    layout.resolve(0.0).unwrap();
+    assert_eq!(
+        pixel(&painter.paint(layout.document()).unwrap(), [40.0, 45.0]),
+        0xff0000ff
+    );
+}
+
+#[test]
+fn inline_colors_and_input_values_use_their_resolved_text_runs() {
+    let layout = document(
+        r#"<style>body{margin:0;color:#f00} span{color:#00f} input{color:#008000}</style>
+        <p>Red <span>Blue</span></p><input value='Typed value'>"#,
+    );
+    let mesh = Painter::default().paint(layout.document()).unwrap();
+    for color in [0xff0000ff, 0xffff0000, 0xff008000] {
+        assert!(
+            mesh.triangle_colors.contains(&color),
+            "missing glyph color {color:08x}"
+        );
+    }
+    let empty = document("<input value=''>");
+    let filled = document("<input value='Typed value'>");
+    assert!(
+        Painter::default().paint(filled.document()).unwrap().glyphs
+            > Painter::default().paint(empty.document()).unwrap().glyphs
+    );
 }

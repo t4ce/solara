@@ -1,4 +1,4 @@
-//! UI4 owns the window; this adapter submits the document's native text/lines.
+//! UI4 owns the window; submit retained CSS solids and glyph meshes in order.
 use crate::native_images::{Images, Resources};
 use rust_qjs_dom::DomEngine;
 use solara::{
@@ -29,8 +29,6 @@ const DEMOS: [(&str, &str); 4] = [
         include_str!("../docs/FlowAndForms.html"),
     ),
 ];
-const BACKGROUND: u32 = u32::from_le_bytes([13, 18, 27, 255]);
-const INK: u32 = u32::from_le_bytes([229, 237, 248, 255]);
 const BROWSER_CADENCE_MS: u64 = 250;
 
 #[derive(Default)]
@@ -306,7 +304,7 @@ impl Window {
             return self.expand();
         }
         if self.dirty {
-            self.frame.begin(BACKGROUND)?;
+            self.frame.begin(u32::from_le_bytes([13, 18, 27, 255]))?;
             self.frame.write_opaque_rgba8(&self.favicon.pixels)?;
             self.frame.publish(Damage::full(64, 64))?;
             self.dirty = false;
@@ -459,7 +457,7 @@ impl Window {
         self.frame.begin_gpu_frame()?;
         let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
         let mut batch = vgpu::IndexedDrawBatchV2 {
-            clear_rgba8_srgb: BACKGROUND,
+            clear_rgba8_srgb: self.mesh.canvas_color,
             ..Default::default()
         };
         batch.draw_count = self.draws.len() as u32;
@@ -469,7 +467,7 @@ impl Window {
             batch.draw_count = 1;
             batch.draws[0] = vgpu::IndexedBatchDrawV2 {
                 index_count: 3,
-                rgba8_srgb: BACKGROUND,
+                rgba8_srgb: self.mesh.canvas_color,
                 topology: vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
                 ..Default::default()
             };
@@ -488,14 +486,14 @@ impl Window {
         self.frame
             .publish(Damage::full(self.frame.width(), self.frame.height()))?;
         crate::parser_probe::report_info(format_args!(
-            "solara: native-frame window={} boxes={} glyphs={} cached_glyphs={} vertices={} triangles={} lines={} scroll_y={} timeline={} image_draws={} upload_us={} render_us={} frame_us={}",
+            "solara: native-frame window={} boxes={} glyphs={} cached_glyphs={} vertices={} triangles={} color_runs={} scroll_y={} timeline={} image_draws={} upload_us={} render_us={} frame_us={}",
             self.frame.window_id(),
             self.mesh.boxes,
             self.mesh.glyphs,
             self.painter.cached_glyphs(),
             self.mesh.vertices.len(),
             self.mesh.triangles.len() / 3,
-            self.mesh.lines.len() / 2,
+            self.mesh.color_runs().count(),
             self.scroll_y,
             point.value,
             image_draws,
@@ -565,28 +563,8 @@ impl Window {
         let mut remap = vec![(u32::MAX, 0u32); visible.vertices.len()];
         // The broker materializes each draw in contiguous DMA storage. Bound
         // each allocation, and use base_vertex so it copies only that draw.
-        let mut line_groups = std::collections::BTreeMap::<u32, Vec<u32>>::new();
-        for (line, color) in visible.lines.chunks_exact(2).zip(&visible.line_colors) {
-            line_groups
-                .entry(*color)
-                .or_default()
-                .extend_from_slice(line);
-        }
-        let sources = line_groups
-            .iter()
-            .map(|(color, indices)| {
-                (
-                    indices.as_slice(),
-                    *color,
-                    vgpu::PRIMITIVE_TOPOLOGY_LINE_LIST,
-                )
-            })
-            .chain(std::iter::once((
-                visible.triangles.as_slice(),
-                INK,
-                vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-            )));
-        for (source, color, topology) in sources {
+        for (source, color) in visible.color_runs() {
+            let topology = vgpu::PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
             for chunk in source.chunks(12_288) {
                 if draws.len() == vgpu::MAX_INDEXED_BATCH_V2_DRAWS {
                     return Err(Error::Other(

@@ -253,3 +253,48 @@ fn invalid_viewports_and_clocks_do_not_enter_the_layout_engine() {
     assert!(layout.set_viewport(invalid).is_err());
     assert_eq!(layout.summary().generation, 0);
 }
+
+#[test]
+fn generic_fallbacks_are_proportional_and_woff2_completion_reflows_text() {
+    let source = artifact(
+        r#"<style>
+        @font-face{font-family:WebFace;src:url(https://cdn.example.test/font.woff2?v=1) format('woff2')}
+        .sample{display:inline-block;font:32px WebFace,sans-serif}
+        </style><div id='wide' class='sample'>WWWW</div><div id='narrow' class='sample'>iiii</div>"#,
+    );
+    let net = Arc::new(DeferredCss::default());
+    let mut cfg = config(800);
+    cfg.net_provider = Some(net.clone());
+    let mut layout = SpecLayout::from_artifact(&source, cfg).unwrap();
+    assert!(layout.resolve(0.0).unwrap());
+    assert!(
+        width(&layout, "wide") > 2.0 * width(&layout, "narrow"),
+        "sans-serif fallback must be proportional"
+    );
+    let id = node(&layout, "wide");
+    let requests = std::mem::take(&mut *net.0.lock().unwrap());
+    assert_eq!(
+        requests.len(),
+        1,
+        "WOFF2 font face must actually be requested"
+    );
+    for (url, handler) in requests {
+        assert_eq!(url, "https://cdn.example.test/font.woff2?v=1");
+        // Repacked from the bundled OFL Inconsolata TTF, with no glyph changes.
+        handler.bytes(
+            url,
+            Bytes::from_static(include_bytes!("fixtures/Inconsolata-Regular.woff2")),
+        );
+    }
+    assert!(layout.resolve(0.1).unwrap());
+    close(width(&layout, "wide"), width(&layout, "narrow"));
+    assert_eq!(node(&layout, "wide"), id);
+    let fonts = font_ids(&layout);
+    layout.set_viewport(viewport(400)).unwrap();
+    assert!(layout.resolve(0.2).unwrap());
+    assert_eq!(font_ids(&layout), fonts);
+    assert!(
+        net.0.lock().unwrap().is_empty(),
+        "resize reuses the decoded font"
+    );
+}

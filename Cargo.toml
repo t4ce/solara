@@ -3,7 +3,7 @@ name = "solara"
 version = "0.0.6"
 edition = "2024"
 authors = ["iamwjun","t4ce"]
-description = "TRUEOS HTML/CSS layout with a native UI4 text and line view."
+description = "TRUEOS HTML/CSS layout with native UI4 text and CSS geometry."
 default-run = "solara"
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,10 @@ include = [
     "assets/fonts/*",
     "assets/images/*",
     "tests/**/*.rs",
+    "tests/fixtures/*.woff2",
+    "examples/page_probe.rs",
+    "tools/capture_page.py",
+    "docs/browse-content-bringup.md",
     "docs/spec-layout.md",
     "docs/home.html",
     "docs/FrameworkLayout.html",
@@ -47,7 +51,7 @@ rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 url = "2.5.8"
 # Keep Blitz's DOM/Stylo/Taffy integration on one audited revision. No shell,
 # renderer, system-font discovery or HTTP client is selected by these crates.
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb4cac697b763f8f5d01ee83cefb", default-features = false, features = ["floats"], optional = true }
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb4cac697b763f8f5d01ee83cefb", default-features = false, features = ["floats", "woff"], optional = true }
 blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb4cac697b763f8f5d01ee83cefb", default-features = false, optional = true }
 parley = { version = "=0.11.1", default-features = false, features = ["std"], optional = true }
 linebender_resource_handle = { version = "0.1", optional = true }
@@ -68,6 +72,10 @@ native-demos = ["spec-layout"]
 [[bin]]
 name = "solara"
 path = "src/main.rs"
+
+[[example]]
+name = "page_probe"
+required-features = ["spec-layout"]
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api" }

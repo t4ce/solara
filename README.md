@@ -3,7 +3,7 @@
 Solara is a TRUEOS browser project. The current milestone parses HTML/CSS and
 computes retained layout using Blitz, Stylo, Taffy and Parley. It also has a
 bounded first page-script proof and a Shell2 `surf` launch path. On TRUEOS it
-now presents a native text-and-lines view in UI4 through the existing indexed
+now presents native CSS solids and shaped text in UI4 through the existing indexed
 render path used by PotatoStamps.
 
 The goal is faithful rendering of selected modern CSS frameworks and a useful
@@ -75,31 +75,32 @@ a direct run opens the single-tab navigator. The explicit `native-demos` feature
 retains four independent, tiled UI4 frames: `FrameworkLayout.html`,
 `TextAndBorders.html`, `DivsAndPanels.html`, and `FlowAndForms.html`. Navigation uses the same drawing path.
 
-The first view uses pale glyph meshes and cyan box edges on a dark background.
+The native painter uses authored text colors, solid backgrounds, rounded
+background outlines, and computed border widths/colors. It traverses Blitz's
+paint children and stacking contexts; contiguous equal-color triangles share
+GPU draws without globally sorting by color. Generic sans-serif/system fonts
+use bundled DejaVu Sans, serif uses DejaVu Serif, and monospace retains
+Inconsolata. WOFF/WOFF2 web fonts load through Blitz's existing resource path
+and trigger reflow. No diagnostic box wireframes are drawn.
+
 Glyph positions, font bytes, sizes, variation coordinates and synthetic slant
-come from Parley. Outlines use the existing Skrifa dependency; the small TRUEOS
-path fill helper is copied locally for Blueprint packaging. Native line lists
-close each box. Geometry stays resident while idle; wheel/middle-button pan
-updates the projection, and UI4 resize events trigger Blitz reflow with cached
-glyph outlines. Only viewport-intersecting primitives are uploaded, with compact
-line vertices to avoid the broker copying text into line draws. Draws are split
-into at most 12,288 indices each so the broker can use small contiguous DMA
-allocations, still within one native batch submission per frame. A fatal draw
-error is reported per window and leaves the other windows live. No FontCanvas, glyph sprites, WGPU or Winit are used.
+come from Parley. Outlines use Skrifa and the native path tessellator; glyph
+geometry remains cached across scrolling and reflow. Input values now use the
+same text path. Native solids and glyphs respect ancestor overflow rectangles
+and legacy CSS `clip: rect(...)`, including transformed clipping rectangles.
+Only viewport-intersecting primitives are uploaded. Ordered draws remain
+bounded to 12,288 indices each and 600 draws in one native batch.
 
-Button contours now use their computed CSS border colors. A small user-agent
-stylesheet in `src/spec_layout/button-defaults.css` brightens enabled buttons on
-`:hover`; ordinary author rules keep cascade priority. UI4 pointer coordinates
-feed Blitz hit testing, including descendants and the native scroll offset.
-Leaving the frame or losing its cursor route clears hover. Pointer moves within
-the same hit target do not rebuild glyphs or submit another frame. This first
-feedback is a border highlight; fills and click actions are still subsequent work.
+Button borders retain the existing authored CSS/hover cascade. Pointer movement
+within the same target does not rebuild geometry. Scrolling changes the viewport
+projection; resize reflows the retained document. Idle frames do not redraw.
 
-This is a diagnostic view: general authored fills/colors, rounded borders, nested overflow
-clipping, form-control text, and full paint/compositing order are not implemented.
-Text uses the existing native triangle rasterizer without a new antialiasing
-pass. QJS interaction and continuous animation are subsequent work. The window
-loop only draws when geometry, image readiness or scrolling changes.
+This is a bounded rendering milestone. Dashed/dotted/double borders, curved
+inner border joins, general inline backgrounds, gradients, shadows, group
+opacity, full CSS clipping/stacking semantics, input placeholders, and text
+antialiasing remain incomplete. The browser does not yet execute network page
+scripts. See [the browse-content bring-up](docs/browse-content-bringup.md) for
+the measured PeerTube frontier and repeatable capture/probe commands.
 
 JPEG `<img>` assets (`.jpg`/`.jpeg`, including URL query strings) now use async
 kernel HTTP fetch and `vmedia` decoding. Solara does not include a JPEG decoder.
@@ -108,7 +109,7 @@ submits position+UV triangles through the existing sampled Picasso shader. Image
 respect the content box, transforms and `object-fit` (fill/contain/cover/none/
 scale-down); simple percentage/pixel `object-position` is supported. Background
 images, masks, nested overflow clipping and full DOM painter order remain outside
-this diagnostic view. Images currently follow the text/line batch.
+this painter. Images currently follow the solid/text batch; interleaved textured painting remains future work.
 
 The kernel's `INDEXED_DRAW_LOAD_COLOR` continuation preserves that batch and keeps
 an immutable sampled texture cached for each MAP_WRITE-only pixel buffer. A pixel

@@ -1,5 +1,4 @@
-//! First native view: the resolved Blitz boxes and Parley glyphs as geometry.
-//! This is intentionally a diagnostic text/contour view, not full CSS painting.
+//! Native CSS solids and shaped text, in retained document paint order.
 use std::collections::BTreeMap;
 
 use blitz_dom::{BaseDocument, NodeId};
@@ -14,13 +13,16 @@ use skrifa::{
 mod path_mesh;
 use path_mesh::{FillOptions, Path, PathBuilder, VertexBuffers, point};
 
+mod boxes;
+use boxes::{ancestor_clips, append_geometry, append_polygon, canvas_background, rounded_box};
+
 #[derive(Default)]
 pub struct PageMesh {
     pub vertices: Vec<[f32; 2]>,
     pub triangles: Vec<u32>,
-    pub lines: Vec<u32>,
-    /// One resolved RGBA color per line, in the same order as `lines.chunks(2)`.
-    pub line_colors: Vec<u32>,
+    /// Straight sRGBA per triangle. Adjacent equal colors may share a draw.
+    pub triangle_colors: Vec<u32>,
+    pub canvas_color: u32,
     pub images: Vec<ImageQuad>,
     pub boxes: usize,
     pub glyphs: usize,
@@ -52,48 +54,87 @@ pub fn jpeg_url(url: &url::Url) -> bool {
 }
 
 impl PageMesh {
-    /// Retain the whole document on the CPU, but submit only primitives touching
-    /// this viewport. Compact line vertices first: the native broker materializes
-    /// each draw's indexed vertex prefix, so interleaving text and lines wastes DMA.
+    /// Cull without sorting by color: overlapping boxes must keep painter order.
     pub fn viewport(&self, width: f32, height: f32, scroll_y: f32) -> Self {
-        let mut out = Self::default();
+        let mut out = Self {
+            canvas_color: self.canvas_color,
+            ..Self::default()
+        };
         let mut remap = vec![u32::MAX; self.vertices.len()];
-        for (source, count, lines) in [(&self.lines, 2, true), (&self.triangles, 3, false)] {
-            for (primitive_index, primitive) in source.chunks_exact(count).enumerate() {
-                let mut low = [f32::INFINITY; 2];
-                let mut high = [f32::NEG_INFINITY; 2];
-                for index in primitive {
-                    let p = self.vertices[*index as usize];
-                    for axis in 0..2 {
-                        low[axis] = low[axis].min(p[axis]);
-                        high[axis] = high[axis].max(p[axis]);
-                    }
+        for (primitive, color) in self.triangles.chunks_exact(3).zip(&self.triangle_colors) {
+            let mut low = [f32::INFINITY; 2];
+            let mut high = [f32::NEG_INFINITY; 2];
+            for index in primitive {
+                let p = self.vertices[*index as usize];
+                for axis in 0..2 {
+                    low[axis] = low[axis].min(p[axis]);
+                    high[axis] = high[axis].max(p[axis]);
                 }
-                if high[0] < -2.0
-                    || low[0] > width + 2.0
-                    || high[1] < scroll_y - 2.0
-                    || low[1] > scroll_y + height + 2.0
-                {
-                    continue;
+            }
+            if high[0] < 0.0 || low[0] > width || high[1] < scroll_y || low[1] > scroll_y + height {
+                continue;
+            }
+            out.triangle_colors.push(*color);
+            for index in primitive {
+                let slot = &mut remap[*index as usize];
+                if *slot == u32::MAX {
+                    *slot = out.vertices.len() as u32;
+                    out.vertices.push(self.vertices[*index as usize]);
                 }
-                if lines {
-                    out.line_colors.push(self.line_colors[primitive_index]);
-                }
-                for index in primitive {
-                    let slot = &mut remap[*index as usize];
-                    if *slot == u32::MAX {
-                        *slot = out.vertices.len() as u32;
-                        out.vertices.push(self.vertices[*index as usize]);
-                    }
-                    if lines {
-                        out.lines.push(*slot);
-                    } else {
-                        out.triangles.push(*slot);
-                    }
-                }
+                out.triangles.push(*slot);
             }
         }
         out
+    }
+
+    /// Headless geometry evidence; images remain separate native textures.
+    pub fn svg_preview(&self, width: u32, height: u32, scroll_y: f32) -> String {
+        use std::fmt::Write;
+        let view = self.viewport(width as f32, height as f32, scroll_y);
+        let [r, g, b, a] = self.canvas_color.to_le_bytes();
+        let mut svg = format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 {scroll_y} {width} {height}'><rect y='{scroll_y}' width='100%' height='100%' fill='rgb({r},{g},{b})' fill-opacity='{}'/>",
+            a as f32 / 255.0
+        );
+        for (indices, color) in view.color_runs() {
+            let [r, g, b, a] = color.to_le_bytes();
+            write!(
+                svg,
+                "<path fill='rgb({r},{g},{b})' fill-opacity='{}' d='",
+                a as f32 / 255.0
+            )
+            .unwrap();
+            for t in indices.chunks_exact(3) {
+                let [a, b, c] = [
+                    view.vertices[t[0] as usize],
+                    view.vertices[t[1] as usize],
+                    view.vertices[t[2] as usize],
+                ];
+                write!(
+                    svg,
+                    "M{:.3},{:.3} L{:.3},{:.3} {:.3},{:.3} Z ",
+                    a[0], a[1], b[0], b[1], c[0], c[1]
+                )
+                .unwrap();
+            }
+            svg.push_str("'/>");
+        }
+        svg.push_str("</svg>");
+        svg
+    }
+
+    pub fn color_runs(&self) -> impl Iterator<Item = (&[u32], u32)> {
+        let mut start = 0;
+        std::iter::from_fn(move || {
+            let color = *self.triangle_colors.get(start)?;
+            let mut end = start + 1;
+            while self.triangle_colors.get(end) == Some(&color) {
+                end += 1;
+            }
+            let indices = &self.triangles[start * 3..end * 3];
+            start = end;
+            Some((indices, color))
+        })
     }
 }
 
@@ -108,8 +149,15 @@ impl Painter {
     }
 
     pub fn paint(&mut self, doc: &BaseDocument) -> Result<PageMesh, String> {
-        let mut mesh = PageMesh::default();
-        for (_, node) in doc.tree().iter() {
+        let (canvas_color, propagated_background) = canvas_background(doc);
+        let mut mesh = PageMesh {
+            canvas_color,
+            ..PageMesh::default()
+        };
+        for id in paint_order(doc) {
+            let Some(node) = doc.get_node(id) else {
+                continue;
+            };
             if !node.flags.is_in_document() || node.element_data().is_none() {
                 continue;
             }
@@ -145,52 +193,74 @@ impl Painter {
             }
             let layout = node.final_layout();
             let transform = world_transform(doc, node.id);
+            let clips = ancestor_clips(doc, node.id);
             if layout.size.width > 0.0 && layout.size.height > 0.0 {
-                let base = checked_base(&mesh, 4)?;
-                for p in [
-                    [0.0, 0.0],
-                    [layout.size.width, 0.0],
-                    [layout.size.width, layout.size.height],
-                    [0.0, layout.size.height],
-                ] {
-                    let p = transform_point(transform, p);
-                    mesh.height = mesh.height.max(p[1]);
-                    mesh.vertices.push(p);
+                let w = layout.size.width;
+                let h = layout.size.height;
+                for p in [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]] {
+                    mesh.height = mesh.height.max(transform_point(transform, p)[1]);
                 }
-                mesh.lines.extend([
-                    base,
-                    base + 1,
-                    base + 1,
-                    base + 2,
-                    base + 2,
-                    base + 3,
-                    base + 3,
-                    base,
-                ]);
-                let element = node.element_data().expect("element checked above");
-                let is_button = element.name.local.as_ref() == "button"
-                    || (element.name.local.as_ref() == "input"
-                        && element.attrs().iter().any(|a| {
-                            a.name.local.as_ref() == "type"
-                                && ["button", "submit", "reset"]
-                                    .iter()
-                                    .any(|kind| a.value.eq_ignore_ascii_case(kind))
-                        }));
-                if is_button {
-                    let current = style.clone_color();
-                    let border = style.get_border();
-                    for color in [
+                let current = style.clone_color();
+                if Some(node.id) != propagated_background {
+                    let color = style
+                        .clone_background_color()
+                        .resolve_to_absolute(&current)
+                        .to_nscolor();
+                    append_polygon(
+                        &mut mesh,
+                        &rounded_box(doc, node.id, w, h),
+                        transform,
+                        color,
+                        &clips,
+                    )?;
+                }
+                let mut border_clips = clips.clone();
+                border_clips.push(
+                    rounded_box(doc, node.id, w, h)
+                        .into_iter()
+                        .map(|p| transform_point(transform, p))
+                        .collect(),
+                );
+                let border = style.get_border();
+                let [t, r, b, l] = [
+                    layout.border.top,
+                    layout.border.right,
+                    layout.border.bottom,
+                    layout.border.left,
+                ];
+                // Four trapezoids meet at the inner corners; CSS border widths
+                // come from layout (none/hidden resolve to zero).
+                for (points, color, width) in [
+                    (
+                        [[0.0, 0.0], [w, 0.0], [w - r, t], [l, t]],
                         &border.border_top_color,
+                        t,
+                    ),
+                    (
+                        [[w, 0.0], [w, h], [w - r, h - b], [w - r, t]],
                         &border.border_right_color,
+                        r,
+                    ),
+                    (
+                        [[w, h], [0.0, h], [l, h - b], [w - r, h - b]],
                         &border.border_bottom_color,
+                        b,
+                    ),
+                    (
+                        [[0.0, h], [0.0, 0.0], [l, t], [l, h - b]],
                         &border.border_left_color,
-                    ] {
-                        mesh.line_colors
-                            .push(color.resolve_to_absolute(&current).to_nscolor());
+                        l,
+                    ),
+                ] {
+                    if width > 0.0 {
+                        append_polygon(
+                            &mut mesh,
+                            &points,
+                            transform,
+                            color.resolve_to_absolute(&current).to_nscolor(),
+                            &border_clips,
+                        )?;
                     }
-                } else {
-                    mesh.line_colors
-                        .extend([u32::from_le_bytes([65, 151, 174, 255]); 4]);
                 }
                 mesh.boxes += 1;
             }
@@ -265,24 +335,43 @@ impl Painter {
                     }
                 }
             }
-            if !node.flags.is_inline_root() {
-                continue;
-            }
-            let Some(text) = node
-                .element_data()
-                .and_then(|e| e.inline_layout_data.as_ref())
-            else {
+            let element = node.element_data().expect("element checked above");
+            let input = element.text_input_data();
+            let text = if node.flags.is_inline_root() {
+                element.inline_layout_data.as_ref().map(|text| &text.layout)
+            } else {
+                input.and_then(|input| input.editor.try_layout())
+            };
+            let Some(text) = text else {
                 continue;
             };
-            let origin = [
+            let mut origin = [
                 layout.border.left + layout.padding.left,
                 layout.border.top + layout.padding.top,
             ];
-            for line in text.layout.lines() {
+            if let Some(input) = input {
+                origin[1] += node.text_input_v_centering_offset(1.0) as f32;
+                origin[usize::from(input.is_multiline)] -= input.scroll_offset;
+            }
+            for line in text.lines() {
                 for item in line.items() {
                     let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                         continue;
                     };
+                    let brush = glyph_run.style().brush.id;
+                    if matches!(
+                        doc.resolved_style_value(brush, "visibility").as_str(),
+                        "hidden" | "collapse"
+                    ) {
+                        continue;
+                    }
+                    let color = doc
+                        .get_node(brush)
+                        .and_then(|node| node.primary_styles())
+                        .map_or_else(
+                            || style.clone_color().to_nscolor(),
+                            |s| s.clone_color().to_nscolor(),
+                        );
                     let run = glyph_run.run();
                     let font = run.font();
                     let skew = run.synthesis().skew().map_or(0.0, |v| v.to_radians().tan());
@@ -323,19 +412,20 @@ impl Painter {
                             self.glyphs.insert(key.clone(), geometry);
                         }
                         let geometry = &self.glyphs[&key];
-                        let base = checked_base(&mesh, geometry.vertices.len())?;
-                        for p in &geometry.vertices {
-                            // Outline coordinates are Y-up; Parley's positioned glyph is its baseline.
-                            mesh.vertices.push(transform_point(
-                                transform,
-                                [
-                                    origin[0] + glyph.x + p[0] + skew * p[1],
-                                    origin[1] + glyph.y - p[1],
-                                ],
-                            ));
-                        }
-                        mesh.triangles
-                            .extend(geometry.indices.iter().map(|i| base + i));
+                        let positions: Vec<_> = geometry
+                            .vertices
+                            .iter()
+                            .map(|p| {
+                                transform_point(
+                                    transform,
+                                    [
+                                        origin[0] + glyph.x + p[0] + skew * p[1],
+                                        origin[1] + glyph.y - p[1],
+                                    ],
+                                )
+                            })
+                            .collect();
+                        append_geometry(&mut mesh, &positions, &geometry.indices, color, &clips)?;
                         mesh.glyphs += 1;
                     }
                 }
@@ -346,6 +436,37 @@ impl Painter {
         }
         Ok(mesh)
     }
+}
+
+/// Traverse Blitz's resolved paint children, including hoisted stacking contexts.
+/// Slab allocation order is unrelated to DOM order after a mutation.
+fn paint_order(doc: &BaseDocument) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut pending: Vec<_> = doc
+        .try_root_element()
+        .map(|node| node.id)
+        .into_iter()
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = doc.get_node(id) else {
+            continue;
+        };
+        out.push(id);
+        let mut children = Vec::new();
+        if let Some(hoisted) = &node.stacking_context {
+            children.extend(hoisted.neg_z_hoisted_children().map(|c| c.node_id));
+        }
+        children.extend(node.paint_children.borrow().iter().flatten().copied());
+        if let Some(hoisted) = &node.stacking_context {
+            children.extend(hoisted.pos_z_hoisted_children().map(|c| c.node_id));
+        }
+        pending.extend(children.into_iter().rev());
+    }
+    out
 }
 
 fn checked_base(mesh: &PageMesh, count: usize) -> Result<u32, String> {

@@ -244,15 +244,31 @@ pub fn bundled_font_context() -> FontContext {
     let families = context
         .collection
         .register_fonts(Blob::new(Arc::new(bytes) as _), None);
-    for generic in [
-        GenericFamily::SansSerif,
-        GenericFamily::Serif,
-        GenericFamily::Monospace,
-        GenericFamily::SystemUi,
+    context
+        .collection
+        .append_generic_families(GenericFamily::Monospace, families.iter().map(|(id, _)| *id));
+    for (bytes, generics) in [
+        (
+            include_bytes!("../../assets/fonts/DejaVuSans.ttf").as_slice(),
+            &[GenericFamily::SansSerif, GenericFamily::SystemUi][..],
+        ),
+        (
+            include_bytes!("../../assets/fonts/DejaVuSans-Bold.ttf").as_slice(),
+            &[][..],
+        ),
+        (
+            include_bytes!("../../assets/fonts/DejaVuSerif.ttf").as_slice(),
+            &[GenericFamily::Serif][..],
+        ),
     ] {
-        context
+        let families = context
             .collection
-            .append_generic_families(generic, families.iter().map(|(id, _)| *id));
+            .register_fonts(Blob::new(Arc::new(bytes) as _), None);
+        for generic in generics {
+            context
+                .collection
+                .append_generic_families(*generic, families.iter().map(|(id, _)| *id));
+        }
     }
     context
 }
