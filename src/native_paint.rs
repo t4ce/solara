@@ -46,11 +46,13 @@ impl ImageQuad {
     }
 }
 
-/// JPEG selection uses the URL path, so query strings and fragments are harmless.
-pub fn jpeg_url(url: &url::Url) -> bool {
-    url.path()
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
+/// JPEG/PNG selection uses the URL path, so query strings and fragments are harmless.
+pub fn raster_image_url(url: &url::Url) -> bool {
+    url.path().rsplit_once('.').is_some_and(|(_, ext)| {
+        ext.eq_ignore_ascii_case("jpg")
+            || ext.eq_ignore_ascii_case("jpeg")
+            || ext.eq_ignore_ascii_case("png")
+    })
 }
 
 impl PageMesh {
@@ -282,7 +284,7 @@ impl Painter {
                     .find(|a| a.name.local.as_ref() == "src")
                     .map(|a| a.value.as_str())
                 && let Ok(url) = doc.base_url().join(src)
-                && jpeg_url(&url)
+                && raster_image_url(&url)
             {
                 let x = layout.border.left + layout.padding.left;
                 let y = layout.border.top + layout.padding.top;

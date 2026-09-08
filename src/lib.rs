@@ -13,3 +13,6 @@ pub mod favicon;
 
 #[cfg(feature = "spec-layout")]
 pub mod page_runtime;
+
+#[cfg(feature = "spec-layout")]
+pub mod image_upload;

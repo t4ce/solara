@@ -1,7 +1,7 @@
-//! JPEG transport and decoding stay in the kernel. Poll each operation without
+//! JPEG/PNG transport and decoding stay in the kernel. Poll each operation without
 //! blocking the UI; upload once and reuse the image's buffer across page frames.
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
-use solara::{native_paint::jpeg_url, spec_layout::SpecLayout};
+use solara::{image_upload, native_paint::raster_image_url, spec_layout::SpecLayout};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     future::{Future, poll_fn},
@@ -26,7 +26,7 @@ pub(crate) struct Resources {
 }
 impl NetProvider for Resources {
     fn fetch(&self, _: usize, request: Request, handler: Box<dyn NetHandler>) {
-        if jpeg_url(&request.url) {
+        if raster_image_url(&request.url) {
             let url = request.url.to_string();
             if self.seen.lock().expect("resource lock").insert(url.clone()) {
                 self.queued.lock().expect("resource lock").push_back(url);
@@ -142,9 +142,16 @@ async fn load(url: String) -> Result<vmedia::DecodedImage, String> {
     } else {
         return Err("unsupported image URL".into());
     };
-    vmedia::decode(vmedia::ImageFormat::Jpeg, &bytes)
+    let format = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        vmedia::ImageFormat::Png
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        vmedia::ImageFormat::Jpeg
+    } else {
+        return Err("unsupported image signature".into());
+    };
+    vmedia::decode(format, &bytes)
         .await
-        .map_err(|e| format!("kernel JPEG decode: {e}"))
+        .map_err(|e| format!("kernel image decode: {e}"))
 }
 struct Pending {
     url: String,
@@ -218,8 +225,27 @@ impl Images {
                             pixel(info.height.saturating_sub(1))
                         ),
                     );
+                    let used: usize = self
+                        .textures
+                        .values()
+                        .map(|texture| texture.pitch as usize * texture.height as usize)
+                        .sum();
+                    let Some(upload) = image_upload::prepare(
+                        &decoded.rgba,
+                        info.width,
+                        info.height,
+                        image_upload::PAGE_TEXTURE_BYTES.saturating_sub(used),
+                    ) else {
+                        crate::parser_probe::report_error(format_args!(
+                            "solara: image-failed url={} texture-budget",
+                            pending.url
+                        ));
+                        continue;
+                    };
+                    let texture_width = upload.width;
+                    let texture_height = upload.height;
                     let buffer = match device
-                        .create_buffer(decoded.rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)
+                        .create_buffer(upload.rgba.len(), vgpu::BUFFER_USAGE_MAP_WRITE)
                     {
                         Ok(buffer) => buffer,
                         Err(error) => {
@@ -230,13 +256,14 @@ impl Images {
                             continue;
                         }
                     };
-                    match device.write_buffer(buffer, 0, &decoded.rgba) {
-                        Ok(n) if n == decoded.rgba.len() => {}
+                    match device.write_buffer(buffer, 0, &upload.rgba) {
+                        Ok(n) if n == upload.rgba.len() => {}
                         result => {
                             let _ = device.destroy_buffer(buffer);
                             return Err(format!("image upload: {result:?}"));
                         }
                     }
+                    drop(upload);
                     layout.load_image(
                         pending.url.clone(),
                         info.width,
@@ -247,18 +274,20 @@ impl Images {
                         pending.url.clone(),
                         Texture {
                             buffer,
-                            width: info.width,
-                            height: info.height,
-                            pitch: info.stride_bytes,
+                            width: texture_width,
+                            height: texture_height,
+                            pitch: texture_width * 4,
                         },
                     );
                     crate::parser_probe::report_info(format_args!(
-                        "solara: image-ready url={} size={}x{} backend={:?} texture_buffer={} decoder=kernel",
+                        "solara: image-ready url={} size={}x{} backend={:?} texture_buffer={} texture={}x{} decoder=kernel",
                         pending.url,
                         info.width,
                         info.height,
                         info.backend,
-                        buffer.raw()
+                        buffer.raw(),
+                        texture_width,
+                        texture_height
                     ));
                     changed = true;
                 }

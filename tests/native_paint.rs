@@ -13,7 +13,7 @@ impl blitz_traits::net::NetProvider for Resources {
         req: blitz_traits::net::Request,
         handler: Box<dyn blitz_traits::net::NetHandler>,
     ) {
-        if solara::native_paint::jpeg_url(&req.url) {
+        if solara::native_paint::raster_image_url(&req.url) {
             return; // Tests deliver decoded images through SpecLayout::load_image.
         }
         let css = match req.url.path().rsplit('/').next().unwrap_or("") {
@@ -157,20 +157,21 @@ fn viewport_compacts_visible_primitives_and_scroll_reveals_the_rest() {
 }
 
 #[test]
-fn jpeg_urls_use_path_extensions() {
+fn raster_image_urls_use_path_extensions() {
     for url in [
         "https://example.test/cat.JPG?v=2#image",
         "trueos://solara/assets/cat.jpeg",
+        "https://example.test/cat.PNG?v=2#image",
     ] {
-        assert!(solara::native_paint::jpeg_url(
+        assert!(solara::native_paint::raster_image_url(
             &url::Url::parse(url).unwrap()
         ));
     }
     for url in [
-        "https://example.test/cat.png",
+        "https://example.test/cat.svg",
         "https://example.test/image?name=cat.jpg",
     ] {
-        assert!(!solara::native_paint::jpeg_url(
+        assert!(!solara::native_paint::raster_image_url(
             &url::Url::parse(url).unwrap()
         ));
     }
@@ -195,7 +196,7 @@ fn decoded_images_reflow_and_crop_without_rebuilding_glyphs_on_scroll() {
         body { margin:0 } img { display:block }
         #cover { width:200px;height:60px;object-fit:cover }
         #contain { width:200px;height:60px;object-fit:contain; transform:translateX(10px) }
-        </style></head><body><img src="cat.jpeg"><img id="cover" src="cat.jpeg">
+        </style></head><body><img src="cat.PNG?v=1"><img id="cover" src="cat.jpeg">
         <div style="height:800px"></div><img id="contain" src="cat.jpeg"></body></html>"#,
             "https://example.test/page.html",
         )
@@ -219,6 +220,13 @@ fn decoded_images_reflow_and_crop_without_rebuilding_glyphs_on_scroll() {
         80,
         40,
         std::sync::Arc::new(vec![255; 80 * 40 * 4]),
+    );
+    layout.resolve(0.0).unwrap();
+    layout.load_image(
+        "https://example.test/pictures/cat.PNG?v=1".into(),
+        80,
+        40,
+        std::sync::Arc::new(vec![127; 80 * 40 * 4]),
     );
     layout.resolve(0.0).unwrap();
     let mut painter = Painter::default();
