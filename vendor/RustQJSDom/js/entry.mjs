@@ -1,4 +1,4 @@
-import { parse as parseHtml } from 'parse5';
+import { parse as parseHtml, parseFragment, defaultTreeAdapter } from 'parse5';
 import {
   collectWidgetStats,
   domToWidgets,
@@ -172,3 +172,8 @@ globalThis.__rustQjsDomParseJson = function parseDomJson(inputHtml, inputUrl, in
 };
 
 globalThis.__rustQjsDomReady = true;
+
+// Fragment parsing uses the same HTML tree builder as initial navigation.
+globalThis.__rustQjsDomFragment = (html, tag, namespace) => normalizeNode(parseFragment(
+  defaultTreeAdapter.createElement(tag || 'div', namespace || 'http://www.w3.org/1999/xhtml', []), html
+));

@@ -61,7 +61,13 @@ impl PageMesh {
             ..Self::default()
         };
         let mut remap = vec![u32::MAX; self.vertices.len()];
-        for (primitive, color) in self.triangles.chunks_exact(3).zip(&self.triangle_colors) {
+        for (primitive, color) in self
+            .triangles
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&self.triangle_colors)
+        {
             let mut low = [f32::INFINITY; 2];
             let mut high = [f32::NEG_INFINITY; 2];
             for index in primitive {
@@ -104,7 +110,7 @@ impl PageMesh {
                 a as f32 / 255.0
             )
             .unwrap();
-            for t in indices.chunks_exact(3) {
+            for t in indices.as_chunks::<3>().0 {
                 let [a, b, c] = [
                     view.vertices[t[0] as usize],
                     view.vertices[t[1] as usize],
@@ -154,7 +160,7 @@ impl Painter {
             canvas_color,
             ..PageMesh::default()
         };
-        for id in paint_order(doc) {
+        for (id, content) in paint_order(doc) {
             let Some(node) = doc.get_node(id) else {
                 continue;
             };
@@ -194,7 +200,7 @@ impl Painter {
             let layout = node.final_layout();
             let transform = world_transform(doc, node.id);
             let clips = ancestor_clips(doc, node.id);
-            if layout.size.width > 0.0 && layout.size.height > 0.0 {
+            if !content && layout.size.width > 0.0 && layout.size.height > 0.0 {
                 let w = layout.size.width;
                 let h = layout.size.height;
                 for p in [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]] {
@@ -263,6 +269,9 @@ impl Painter {
                     }
                 }
                 mesh.boxes += 1;
+            }
+            if !content {
+                continue;
             }
             if let Some(element) = node.element_data()
                 && element.name.local.as_ref() == "img"
@@ -353,6 +362,27 @@ impl Painter {
                 origin[1] += node.text_input_v_centering_offset(1.0) as f32;
                 origin[usize::from(input.is_multiline)] -= input.scroll_offset;
             }
+            let mut text_clips = clips;
+            if input.is_some()
+                || ["overflow-x", "overflow-y"].iter().any(|property| {
+                    matches!(
+                        doc.resolved_style_value(node.id, property).as_str(),
+                        "hidden" | "clip" | "auto" | "scroll"
+                    )
+                })
+            {
+                let [l, t, r, b] = [
+                    layout.border.left,
+                    layout.border.top,
+                    layout.size.width - layout.border.right,
+                    layout.size.height - layout.border.bottom,
+                ];
+                text_clips.push(
+                    [[l, t], [r, t], [r, b], [l, b]]
+                        .map(|p| transform_point(transform, p))
+                        .to_vec(),
+                );
+            }
             for line in text.lines() {
                 for item in line.items() {
                     let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -425,7 +455,13 @@ impl Painter {
                                 )
                             })
                             .collect();
-                        append_geometry(&mut mesh, &positions, &geometry.indices, color, &clips)?;
+                        append_geometry(
+                            &mut mesh,
+                            &positions,
+                            &geometry.indices,
+                            color,
+                            &text_clips,
+                        )?;
                         mesh.glyphs += 1;
                     }
                 }
@@ -440,29 +476,41 @@ impl Painter {
 
 /// Traverse Blitz's resolved paint children, including hoisted stacking contexts.
 /// Slab allocation order is unrelated to DOM order after a mutation.
-fn paint_order(doc: &BaseDocument) -> Vec<NodeId> {
+fn paint_order(doc: &BaseDocument) -> Vec<(NodeId, bool)> {
     let mut out = Vec::new();
     let mut pending: Vec<_> = doc
         .try_root_element()
-        .map(|node| node.id)
+        .map(|node| (node.id, false))
         .into_iter()
         .collect();
     let mut seen = std::collections::BTreeSet::new();
-    while let Some(id) = pending.pop() {
-        if !seen.insert(id) {
+    while let Some((id, content)) = pending.pop() {
+        if !content && !seen.insert(id) {
             continue;
         }
         let Some(node) = doc.get_node(id) else {
             continue;
         };
-        out.push(id);
+        out.push((id, content));
+        if content {
+            continue;
+        }
         let mut children = Vec::new();
         if let Some(hoisted) = &node.stacking_context {
-            children.extend(hoisted.neg_z_hoisted_children().map(|c| c.node_id));
+            children.extend(hoisted.neg_z_hoisted_children().map(|c| (c.node_id, false)));
         }
-        children.extend(node.paint_children.borrow().iter().flatten().copied());
+        // Negative stacking contexts sit above the parent's background but
+        // below its inline content, even when no ordinary child precedes them.
+        children.push((id, true));
+        children.extend(
+            node.paint_children
+                .borrow()
+                .iter()
+                .flatten()
+                .map(|id| (*id, false)),
+        );
         if let Some(hoisted) = &node.stacking_context {
-            children.extend(hoisted.pos_z_hoisted_children().map(|c| c.node_id));
+            children.extend(hoisted.pos_z_hoisted_children().map(|c| (c.node_id, false)));
         }
         pending.extend(children.into_iter().rev());
     }

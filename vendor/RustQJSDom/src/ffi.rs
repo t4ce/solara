@@ -68,6 +68,8 @@ pub(crate) type JSInterruptHandler =
     unsafe extern "C" fn(runtime: *mut JSRuntime, opaque: *mut c_void) -> c_int;
 
 unsafe extern "C" {
+    pub(crate) fn JS_ExecutePendingJob(rt: *mut JSRuntime, ctx: *mut *mut JSContext) -> c_int;
+    pub(crate) fn JS_IsJobPending(rt: *mut JSRuntime) -> c_int;
     pub(crate) fn JS_NewRuntime() -> *mut JSRuntime;
     pub(crate) fn JS_FreeRuntime(rt: *mut JSRuntime);
     pub(crate) fn JS_NewContext(rt: *mut JSRuntime) -> *mut JSContext;

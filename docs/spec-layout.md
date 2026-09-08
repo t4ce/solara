@@ -55,11 +55,11 @@ network-capable TRUEOS page host must provide real resource loading and error
 handling. In particular, `layout-ready` does not mean every requested asset or
 every authored CSS feature was supported.
 
-The bundled Inconsolata face is registered directly from bytes and mapped to
-generic families for a deterministic measurement proof. It is not a substitute
-for a designer's chosen fonts. The production font context must supply those
-faces/fallbacks; painting must consume the same selected font, glyph IDs,
-variation coordinates, sizes and positions as Parley.
+Bundled DejaVu Sans supplies sans-serif/system fallback, DejaVu Serif supplies
+serif, and Inconsolata supplies monospace. WOFF/WOFF2 faces load through the
+host resource provider and invalidate layout on completion. Painting consumes
+the same selected font, glyph IDs, variation coordinates, sizes and positions
+as Parley. These fallbacks do not reproduce every platform's system fonts.
 
 ## Small integration adaptations
 
@@ -132,9 +132,11 @@ available using `--no-default-features`.
 ## Initial native view
 
 The TRUEOS binary now reads this resolved document directly in `native_paint.rs`
-and submits text triangles and box line lists through `native_window.rs` to UI4.
-The headless host probe and tests stay separate. See the README for the exact
-diagnostic scope; this is not full CSS painting or native SceneDB publication.
+and submits colored text and CSS solid triangles through `native_window.rs` to
+UI4. Diagnostic wireframes have been removed. The headless host probe and tests
+stay separate. See [browse-content bring-up](browse-content-bringup.md) for the
+implemented subset and remaining gaps; this is not full CSS painting or native
+SceneDB publication.
 
 Remaining painting work: extend the native view for the document's painting operations. Retain
 glyph/path geometry, stable fragment identities, clip ancestry and painter
@@ -143,8 +145,8 @@ group opacity and general affine transforms must be lowered according to the
 actual native capabilities.
 
 The Rust document already supports mutation and clock-driven CSS resolution.
-QuickJS is still the bounded first-script proof and has no binding to this live
-document. Connecting a selected JS API surface and the TRUEOS frame scheduler
-is subsequent work. Likewise, a sampled transform is not yet a demonstrated
+The [BIOS increment](bios-bringup.md) binds a selected JavaScript DOM surface
+to this live document and reflows/repaints after each mutation batch. CSSOM and
+JavaScript animation scheduling remain future work. A sampled transform is not yet a demonstrated
 Picasso transform-only frame: geometry reuse and upload behavior remain to be
 measured after that backend exists.

@@ -11,7 +11,7 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use solara::navigation::{Address, NavigationTarget};
+use solara::navigation::{Address, Bookmarks, NavigationTarget};
 use std::{
     io::{self, Write},
     time::Duration,
@@ -24,6 +24,8 @@ pub enum Action {
 }
 pub struct Navigator {
     address: Address,
+    bookmarks: Bookmarks,
+    rows: u16,
     status: String,
     columns: u16,
     dirty: bool,
@@ -37,9 +39,22 @@ fn io_error(e: impl std::fmt::Display) -> io::Error {
 impl Navigator {
     pub fn new() -> io::Result<Self> {
         let lease = trueos::vshell::terminal_initial_lease().map_err(io_error)?;
+        let (bookmarks, status) =
+            match trueos::async_fs::block_on(trueos::async_fs::read_file_utf8(b"vFile:startup")) {
+                Ok(json) => match Bookmarks::from_startup(&json) {
+                    Ok(list) => (list, "Opening home…".into()),
+                    Err(e) => (Bookmarks::default(), format!("Bookmarks: {e}")),
+                },
+                Err(_) => (
+                    Bookmarks::default(),
+                    "Opening home… (no startup bookmarks)".into(),
+                ),
+            };
         let mut ui = Self {
             address: Address::default(),
-            status: "Opening home…".into(),
+            bookmarks,
+            rows: 24,
+            status,
             columns: 80,
             dirty: true,
             lease: Some(lease),
@@ -61,7 +76,7 @@ impl Navigator {
             Clear(ClearType::All),
             Show
         )?;
-        self.columns = terminal::size()?.0;
+        (self.columns, self.rows) = terminal::size()?;
         self.dirty = true;
         self.paint()?;
         if let Some(lease) = &self.lease {
@@ -90,6 +105,7 @@ impl Navigator {
         self.dirty = true;
     }
     pub fn location(&mut self, target: &NavigationTarget) {
+        self.bookmarks.editing = false;
         match target {
             NavigationTarget::Web(url) => self.address.set_url(url),
             NavigationTarget::Demo(demo) => self.address.set_demo(*demo),
@@ -111,7 +127,15 @@ impl Navigator {
         let protocol = if self.address.http { "HTTP " } else { "HTTPS" };
         let mut out = io::BufWriter::new(io::stdout());
         queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
-        write!(out, "Solara")?;
+        write!(
+            out,
+            "Solara  [{}]",
+            if self.bookmarks.editing {
+                "editing address"
+            } else {
+                "1–9 bookmarks"
+            }
+        )?;
         queue!(out, MoveTo(0, 1), Clear(ClearType::CurrentLine))?;
         write!(
             out,
@@ -129,11 +153,23 @@ impl Navigator {
         write!(out, "{status}")?;
         queue!(out, MoveTo(0, 3), Clear(ClearType::CurrentLine))?;
         let help: String =
-            "Enter: go  demo1-3: built-ins  F2: toggle  Ctrl-L: address  Esc: Shell2  Ctrl-Q: quit"
+            "1-9: pick  Enter: go  Ctrl-L: edit  Tab: picks  F2: HTTP/S  Esc: Shell  Ctrl-Q: quit"
                 .chars()
                 .take(self.columns as usize)
                 .collect();
         write!(out, "{help}")?;
+        for (index, (label, target)) in self.bookmarks.entries.iter().enumerate() {
+            let row = 4 + index as u16;
+            if row >= self.rows {
+                break;
+            }
+            queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
+            let line: String = format!("{}  {label}  {target}", index + 1)
+                .chars()
+                .take(self.columns as usize)
+                .collect();
+            write!(out, "{line}")?;
+        }
         let x = 13 + cursor - start;
         queue!(
             out,
@@ -161,17 +197,20 @@ impl Navigator {
                 break;
             }
             match event::read()? {
-                Event::Resize(columns, _) => {
+                Event::Resize(columns, rows) => {
+                    self.rows = rows;
                     self.columns = columns;
                     self.dirty = true;
                 }
                 Event::Paste(text) => {
+                    self.bookmarks.editing = true;
                     self.address.insert(text.trim());
                     self.dirty = true;
                 }
                 Event::Mouse(mouse)
                     if mouse.kind == MouseEventKind::Down(MouseButton::Left) && mouse.row == 1 =>
                 {
+                    self.bookmarks.editing = true;
                     if mouse.column < 7 {
                         self.address.toggle();
                     } else {
@@ -180,8 +219,29 @@ impl Navigator {
                     }
                     self.dirty = true;
                 }
+                Event::Mouse(mouse)
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) && mouse.row >= 4 =>
+                {
+                    if self
+                        .bookmarks
+                        .pick((mouse.row - 4) as usize, &mut self.address)
+                    {
+                        self.status("Bookmark selected — Enter to go, Ctrl-L to edit");
+                    }
+                }
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    if matches!(
+                        key.code,
+                        KeyCode::Left
+                            | KeyCode::Right
+                            | KeyCode::Home
+                            | KeyCode::End
+                            | KeyCode::Backspace
+                            | KeyCode::Delete
+                    ) {
+                        self.bookmarks.editing = true;
+                    }
                     match key.code {
                         KeyCode::Char('q') if ctrl => {
                             action = Some(Action::Quit);
@@ -194,7 +254,9 @@ impl Navigator {
                             }
                             return Ok(None);
                         }
+                        KeyCode::Tab => self.bookmarks.editing = false,
                         KeyCode::Char('l') if ctrl => {
+                            self.bookmarks.editing = true;
                             self.address.select_all();
                         }
                         KeyCode::F(2) => self.address.toggle(),
@@ -219,7 +281,9 @@ impl Navigator {
                         KeyCode::Backspace => self.address.backspace(),
                         KeyCode::Delete => self.address.delete(),
                         KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                            self.address.insert(&c.to_string())
+                            if self.bookmarks.character(c, &mut self.address) {
+                                self.status("Bookmark selected — Enter to go, Ctrl-L to edit");
+                            }
                         }
                         _ => {}
                     }

@@ -407,7 +407,13 @@ fn disclosures_collapse_reflow_and_activate_after_scrolling() {
 
 fn pixel(mesh: &solara::native_paint::PageMesh, p: [f32; 2]) -> u32 {
     let mut color = mesh.canvas_color;
-    for (triangle, &fill) in mesh.triangles.chunks_exact(3).zip(&mesh.triangle_colors) {
+    for (triangle, &fill) in mesh
+        .triangles
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(&mesh.triangle_colors)
+    {
         let points = triangle
             .iter()
             .map(|&i| mesh.vertices[i as usize])
@@ -518,4 +524,31 @@ fn inline_colors_and_input_values_use_their_resolved_text_runs() {
         Painter::default().paint(filled.document()).unwrap().glyphs
             > Painter::default().paint(empty.document()).unwrap().glyphs
     );
+}
+
+#[test]
+fn negative_z_children_paint_between_parent_background_and_text() {
+    let layout = document(
+        r#"<style>
+        body{margin:0} #parent{position:relative;z-index:0;width:200px;height:100px;background:#0f0;color:#f00}
+        #negative{position:absolute;z-index:-1;inset:0;background:#00f}
+        </style><div id='parent'>Visible text<div id='negative'></div></div>"#,
+    );
+    let mesh = Painter::default().paint(layout.document()).unwrap();
+    let first_red = mesh
+        .triangle_colors
+        .iter()
+        .position(|c| *c == 0xff0000ff)
+        .unwrap();
+    let last_blue = mesh
+        .triangle_colors
+        .iter()
+        .rposition(|c| *c == 0xffff0000)
+        .unwrap();
+    let last_green = mesh
+        .triangle_colors
+        .iter()
+        .rposition(|c| *c == 0xff00ff00)
+        .unwrap();
+    assert!(last_green < last_blue && last_blue < first_red);
 }

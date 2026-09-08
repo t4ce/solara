@@ -57,6 +57,9 @@ struct Swoop {
 }
 
 struct Window {
+    scripts: Option<crate::native_scripts::Scripts>,
+    script_error: Option<String>,
+    script_press: Option<solara::spec_layout::NodeId>,
     menu: MenuState,
     zoom_percent: i32,
     needs_reflow: bool,
@@ -167,6 +170,9 @@ impl Window {
         let mut favicon = crate::native_favicon::Favicon::default();
         favicon.navigate(resources.favicon.clone());
         Ok(Self {
+            scripts: None,
+            script_error: None,
+            script_press: None,
             menu: MenuState::default(),
             zoom_percent: 100,
             needs_reflow: false,
@@ -347,16 +353,50 @@ impl Window {
             self.dirty = true;
             self.uploaded = false;
         }
+        let script_changed = if let Some(scripts) = &mut self.scripts {
+            match scripts.tick(&mut self.layout) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    crate::parser_probe::report_error(format_args!(
+                        "solara: page-script stopped: {error}"
+                    ));
+                    self.script_error = Some(error);
+                    self.scripts = None;
+                    // Mutations applied before an error still need a reflow.
+                    true
+                }
+            }
+        } else {
+            false
+        };
+        let scripts_done = trueos::clock::Instant::now();
         let resources_changed = self.resources.poll()?;
         if self
             .images
             .poll(&self.resources, self.device, &mut self.layout)?
             || resources_changed
+            || script_changed
         {
+            crate::parser_probe::report_info(format_args!(
+                "solara: reflow-start script_changed={script_changed} scripts_us={}",
+                scripts_done.saturating_duration_since(started).as_micros()
+            ));
+            let layout_started = trueos::clock::Instant::now();
             if !self.layout.resolve(0.0)? {
                 return Ok(());
             }
+            let paint_started = trueos::clock::Instant::now();
+            crate::parser_probe::report_info(format_args!(
+                "solara: layout-complete layout_us={}",
+                paint_started
+                    .saturating_duration_since(layout_started)
+                    .as_micros()
+            ));
             self.mesh = self.painter.paint(self.layout.document())?;
+            crate::parser_probe::report_info(format_args!(
+                "solara: paint-complete paint_us={}",
+                paint_started.elapsed().as_micros()
+            ));
             self.dirty = true;
             self.uploaded = false;
         }
@@ -395,9 +435,30 @@ impl Window {
             }
             self.pointer = Some((event.source, point));
             if event.buttons_pressed & 1 != 0 {
+                self.script_press = self
+                    .layout
+                    .document()
+                    .hit(point[0], point[1] + self.scroll_y)
+                    .map(|h| h.node_id);
                 self.layout.pointer_button(Some(point), self.scroll_y, true);
             }
             if event.buttons_released & 1 != 0 {
+                let hit = self
+                    .layout
+                    .document()
+                    .hit(point[0], point[1] + self.scroll_y)
+                    .map(|h| h.node_id);
+                if let Some(node) = self.script_press.take().filter(|node| Some(*node) == hit)
+                    && let Some(scripts) = &mut self.scripts
+                {
+                    if let Err(error) = scripts.click(node) {
+                        crate::parser_probe::report_error(format_args!(
+                            "solara: page-click failed: {error}"
+                        ));
+                        self.script_error = Some(error);
+                        self.scripts = None;
+                    }
+                }
                 disclosure_changed |= self
                     .layout
                     .pointer_button(Some(point), self.scroll_y, false);
@@ -759,6 +820,7 @@ fn page_layout(
     });
     let mut resources = Resources::default();
     resources.favicon = favicon;
+    resources.artifact = Some(artifact.clone());
     let resources = Arc::new(resources);
     let layout = SpecLayout::from_artifact(
         &artifact,
@@ -778,6 +840,24 @@ fn page_layout(
 impl Window {
     fn navigate(&mut self, layout: SpecLayout, resources: Arc<Resources>) -> Result<(), String> {
         let mesh = self.painter.paint(layout.document())?;
+        self.script_error = None;
+        self.scripts = if matches!(layout.source_url().scheme(), "http" | "https") {
+            match resources
+                .artifact
+                .as_ref()
+                .map(|artifact| crate::native_scripts::Scripts::new(artifact, &layout))
+                .transpose()
+            {
+                Ok(scripts) => scripts,
+                Err(error) => {
+                    self.script_error = Some(error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        self.script_press = None;
         self.images.release(self.device);
         self.favicon.navigate(resources.favicon.clone());
         self.needs_reflow = true;
@@ -963,6 +1043,9 @@ pub(crate) fn run_browser() -> Result<(), String> {
                 window.frame.window_id()
             ));
             window.failed = true;
+        }
+        if let Some(error) = window.script_error.take() {
+            navigator.status(format!("Page scripts stopped: {error}"));
         }
         trueos::vsys::sleep_ms(if window.swoop.is_some() {
             16

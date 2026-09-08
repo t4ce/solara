@@ -72,6 +72,13 @@ The native build is checked with `TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp
 solara` from TRUEOS-Blueprints. It produces `dist/solara.bp`; building does not
 establish physical-rig visual correctness.
 
+Validation for this increment: all 33 host tests and the native Blueprint build
+passed. Clippy completes with existing warnings in `src/favicon.rs`; strict
+`-D warnings` remains blocked by those warnings. Changed Rust files pass
+rustfmt. Whole-package formatting reports the existing module order in
+`src/main.rs`; `cargo fmt --all` also encounters the existing nested Crossterm
+workspace metadata error.
+
 ## Next boundaries
 
 1. **Remaining static fidelity.** PNG/SVG artwork, placeholders, inline
@@ -80,13 +87,11 @@ establish physical-rig visual correctness.
    to textured images. Images still follow the complete solid/text batch; a
    mixed textured/solid retained submission is needed for full overlap order.
    Group opacity and all CSS stacking/clip cases also need further work.
-2. **Page JavaScript isolation and modules.** Network scripts remain inert.
-   The current classic-script fixture shares the parser runtime and cannot be
-   used as the realm for arbitrary network scripts. Introduce a separate
-   bounded page realm, URL-based ESM dependency loading, and a bounded pending
-   job queue. Preserve real exceptions and missing-API diagnostics. Increasing
-   execution time or pretending missing browser objects exist would not supply
-   these contracts.
+2. **Page JavaScript and modules.** The [BIOS increment](bios-bringup.md) adds
+   a separate bounded classic-script realm, Promise jobs, limited DOM bindings
+   and GET requests. It does not yet provide URL-based ESM dependency loading,
+   Vue hydration or a full browser security/scheduling model. Continue from the
+   actual missing-API diagnostics rather than increasing execution time alone.
 3. **DOM and interaction.** The captured page has server-rendered markup, but
    its search action is Vue-driven. Vue hydration needs live DOM objects,
    traversal/mutation, events, and scheduling; the search bundle also uses

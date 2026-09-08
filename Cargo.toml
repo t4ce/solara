@@ -28,6 +28,7 @@ include = [
     "examples/page_probe.rs",
     "tools/capture_page.py",
     "docs/browse-content-bringup.md",
+    "docs/bios-bringup.md",
     "docs/spec-layout.md",
     "docs/home.html",
     "docs/FrameworkLayout.html",
@@ -49,6 +50,7 @@ include = [
 [dependencies]
 rust-qjs-dom = { version = "0.1.0", path = "vendor/RustQJSDom" }
 url = "2.5.8"
+serde_json = "1"
 # Keep Blitz's DOM/Stylo/Taffy integration on one audited revision. No shell,
 # renderer, system-font discovery or HTTP client is selected by these crates.
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "a50cb8971a03fb4cac697b763f8f5d01ee83cefb", default-features = false, features = ["floats", "woff"], optional = true }
@@ -64,7 +66,7 @@ spec-layout = ["dep:blitz-dom", "dep:blitz-traits", "dep:parley", "dep:linebende
 # TRUEOS selects its own host services. The default spec-layout feature adds
 # measured layout to the handoff; --no-default-features retains the parse probe.
 # On TRUEOS, spec-layout also selects the native text/line UI4 view.
-# The host probe stays headless; neither path adds general page-script scheduling.
+# The host probe stays headless; native navigation has bounded classic scripts.
 trueos-first = []
 # Explicit visual corpus; normal launches open the homepage and navigator.
 native-demos = ["spec-layout"]

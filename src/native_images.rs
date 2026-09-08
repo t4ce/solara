@@ -17,6 +17,7 @@ use trueos::{
 
 #[derive(Default)]
 pub(crate) struct Resources {
+    pub artifact: Option<rust_qjs_dom::DomArtifact>,
     pub favicon: Option<(String, Vec<String>)>,
     queued: Mutex<VecDeque<String>>,
     seen: Mutex<BTreeSet<String>>,

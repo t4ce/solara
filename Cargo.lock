@@ -1688,6 +1688,7 @@ dependencies = [
  "linebender_resource_handle",
  "parley",
  "rust-qjs-dom",
+ "serde_json",
  "skrifa",
  "trueos",
  "url",

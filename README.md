@@ -2,7 +2,7 @@
 
 Solara is a TRUEOS browser project. The current milestone parses HTML/CSS and
 computes retained layout using Blitz, Stylo, Taffy and Parley. It also has a
-bounded first page-script proof and a Shell2 `surf` launch path. On TRUEOS it
+bounded classic-script/DOM runtime and a Shell2 `surf` launch path. On TRUEOS it
 now presents native CSS solids and shaped text in UI4 through the existing indexed
 render path used by PotatoStamps.
 
@@ -21,15 +21,25 @@ or a plan to reproduce every Chrome/Firefox feature.
 logo page in an initially 800×512 UI4 window (smaller on small displays).
 The window remains resizable. `surf <url>` starts that tab at an HTTP(S) address. Shell2 only launches
 Solara; the running Blueprint owns subsequent requests and document replacement.
-One VMX context, one retained QuickJS runtime and one UI4 window stay alive across
+One VMX context, a retained parser runtime and one UI4 window stay alive across
 navigation. Submitting another address discards the previous pending result and
 resets scrolling when the new document is ready. The current kernel GET ABI may
 finish the superseded transport in the background.
 
 A minimal terminal navigator uses the same terminal lease and Crossterm backend
-as Texplo. Type an address and press **Enter**. The **HTTP/HTTPS** toggle sits to
+as Texplo. Press **Ctrl-L**, type an address and press **Enter**. The **HTTP/HTTPS** toggle sits to
 the left of the address: **F2** or a click switches it. Bare addresses use the selected protocol (HTTPS initially);
 a pasted full URL supplies its own protocol. **Ctrl-L** selects the address.
+The kernel's public `startup.json` supplies `solara.bookmarks`, read once from
+`vFile:startup`. Each entry is a URL string or `{ "label": "BIOS", "url":
+"http://192.168.178.94:8338/" }`; `demo1`–`demo3` are also accepted. Only the
+first nine entries are used. They appear as numbered rows below the navbar.
+While idle, **1–9** (or a bookmark-row click) fills the address bar without
+fetching. **Enter** navigates. **Ctrl-L** starts editing, where digits type
+normally; **Tab** returns to bookmark selection. HTTP bookmarks retain their
+scheme and port. Startup settings are embedded in the kernel, so editing the
+file requires a kernel rebuild to reach the rig.
+
 **Esc** parks the navigator in Shell2 while the page stays alive; **vmx_tui**
 reopens it. **Ctrl-Q** closes this Solara instance.
 
@@ -41,8 +51,10 @@ uses a deliberately low 250 ms cadence for navigation, input, and redraw polls.
 
 HTML and linked resources use the existing asynchronous kernel HTTP/HTTPS ABI.
 Failed navigation leaves the prior document available and reports the error in
-the terminal. Network page scripts remain inert; this first navigator does not
-add link activation, history, additional tabs, or browser JavaScript APIs.
+the terminal. Network classic scripts now have an isolated QuickJS page realm,
+DOM mutations, Promise jobs, GET fetch, timers and bubbling click events.
+See [the BIOS bring-up contract](docs/bios-bringup.md) for bounds and limitations.
+Link navigation, history and additional tabs remain future work.
 The page fetch currently accepts UTF-8 HTML up to 16 MiB; the ABI does not expose
 a redirect's final URL, so relative resources use the requested page URL.
 Legacy `open URL` plus `source PATH` launch scripts remain readable.
@@ -53,8 +65,8 @@ start closed while each mounted root starts open. A primary click on the first
 `summary` toggles `open` and reflows the retained document, including after
 scrolling. Buttons within a summary retain their own activation boundary.
 Blitz's bundled bullet font supplies the disclosure triangles as glyph meshes.
-Filesystem action scripts and the WebSocket clock still require browser script
-integration; the controls currently provide native hover feedback in Solara.
+Filesystem write actions and the WebSocket clock are outside the current
+GET-only page-script binding. Native disclosures and hover feedback still work.
 
 ## Current boundary
 
@@ -98,8 +110,8 @@ projection; resize reflows the retained document. Idle frames do not redraw.
 This is a bounded rendering milestone. Dashed/dotted/double borders, curved
 inner border joins, general inline backgrounds, gradients, shadows, group
 opacity, full CSS clipping/stacking semantics, input placeholders, and text
-antialiasing remain incomplete. The browser does not yet execute network page
-scripts. See [the browse-content bring-up](docs/browse-content-bringup.md) for
+antialiasing remain incomplete. The classic-script DOM/fetch binding is still
+limited; modules and framework hydration remain future work. See [the browse-content bring-up](docs/browse-content-bringup.md) for
 the measured PeerTube frontier and repeatable capture/probe commands.
 
 JPEG `<img>` assets (`.jpg`/`.jpeg`, including URL query strings) now use async
@@ -135,18 +147,18 @@ The embedded corpus is:
 - `FlowAndForms.html`: ordinary flow, columns, tables, form controls, logical
   properties, responsive tracks, and the first external classic-script proof.
 
-## First page-script step
+## Embedded parser-only script proof
 
 RustQJSDom still preserves the full script inventory without executing it while
-parsing. After an artifact validates, Solara scans that inventory in document
+parsing. The embedded host corpus (separate from native page realms) scans it in document
 order and evaluates only the first supported classic JavaScript tag in the same
 retained QuickJS runtime. Inline source is used directly. External source must
 also appear as a `kind=script` request in `assetIndex`; Solara then supplies its
 text through a browser-owned loader analogous to the linked-CSS loader. The
 active corpus loader recognizes only the trusted, repository-embedded proof
 file; it does not add network access. Because this milestone shares the retained
-parser runtime, arbitrary network page code remains out of scope until a page
-realm or equivalent protection isolates parser-private globals. The execution
+parser runtime, it is used only for embedded fixtures. Native network scripts
+use the separate page realm described above. This fixture proof’s execution
 deadline is 500 ms.
 
 This stage deliberately does not implement parser-blocking, `async`, `defer`,

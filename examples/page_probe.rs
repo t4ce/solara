@@ -1,6 +1,7 @@
 //! Offline HTML/CSS/font probe for captures from tools/capture_page.py.
 //! The exported SVG contains the native solid and glyph geometry; page scripts
-//! and image textures are reported separately, never presented as implemented.
+//! are opt-in with --scripts; all script/fetch bodies must exist in the capture.
+//! Image textures are reported separately.
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 use rust_qjs_dom::{DomEngine, DomNode};
 use solara::{
@@ -58,7 +59,7 @@ fn scripts(node: &DomNode, counts: &mut [usize; 3]) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 3 {
-        return Err("usage: page_probe CAPTURE_DIRECTORY OUTPUT.svg [WIDTH HEIGHT]".into());
+        return Err("usage: page_probe CAPTURE_DIRECTORY OUTPUT.svg [WIDTH HEIGHT] [--scripts] [--click=SELECTOR] [--expect=SELECTOR]".into());
     }
     let width = args.get(3).map_or(Ok(1280), |s| s.parse::<u32>())?;
     let height = args.get(4).map_or(Ok(800), |s| s.parse::<u32>())?;
@@ -95,6 +96,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         },
     )?;
+    let mut executed = 0;
+    if args.iter().any(|a| a == "--scripts") {
+        use solara::page_runtime::{PageRuntime, Script};
+        let mut runtime = PageRuntime::new(&artifact, &layout)?;
+        let read = |url: &str| -> Result<String, String> {
+            let (file, _) = resources
+                .files
+                .get(url)
+                .ok_or_else(|| format!("Uncaptured script/fetch: {url}"))?;
+            std::fs::read_to_string(resources.root.join(file)).map_err(|e| e.to_string())
+        };
+        while let Some(script) = runtime.scripts.pop_front() {
+            match script {
+                Script::Inline(source) => runtime.execute(&source, "<inline>")?,
+                Script::External(url) => runtime.execute(&read(&url)?, &url)?,
+            }
+            executed += 1;
+        }
+        for tick in 0..32 {
+            while let Some(request) = runtime.take_request() {
+                runtime.complete(request.id, read(&request.url))?;
+            }
+            runtime.tick(tick, &mut layout)?;
+        }
+        if let Some(selector) = args.iter().find_map(|arg| arg.strip_prefix("--click=")) {
+            let node = layout
+                .document()
+                .query_selector(selector)
+                .map_err(|_| "Invalid click selector")?
+                .ok_or("Click target missing")?;
+            runtime.click(node)?;
+            runtime.tick(32, &mut layout)?;
+        }
+        if let Some(selector) = args.iter().find_map(|arg| arg.strip_prefix("--expect="))
+            && layout
+                .document()
+                .query_selector(selector)
+                .map_err(|_| "Invalid expectation selector")?
+                .is_none()
+        {
+            return Err(format!("Runtime expectation missing: {selector}").into());
+        }
+    }
     let mut ready = false;
     for _ in 0..32 {
         if layout.resolve(0.0)? {
@@ -113,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut counts = [0; 3];
     scripts(&artifact.document, &mut counts);
     println!(
-        "url={} viewport={width}x{height} boxes={} glyphs={} height={} triangles={} color_runs={} scripts={} modules={} nomodule={} scripts_executed=0 loaded_resources={} missing_resources={}",
+        "url={} viewport={width}x{height} boxes={} glyphs={} height={} triangles={} color_runs={} scripts={} modules={} nomodule={} scripts_executed={executed} loaded_resources={} missing_resources={}",
         url.trim(),
         mesh.boxes,
         mesh.glyphs,

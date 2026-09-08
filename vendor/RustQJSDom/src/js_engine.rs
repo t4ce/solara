@@ -11,13 +11,14 @@ use serde_json::Value;
 
 use crate::ffi::{
     JS_Call, JS_EVAL_FLAG_COMPILE_ONLY, JS_EVAL_TYPE_GLOBAL, JS_EVAL_TYPE_MODULE, JS_Eval,
-    JS_FreeCString, JS_FreeContext, JS_FreeRuntime, JS_GetContextOpaque, JS_GetException,
-    JS_GetGlobalObject, JS_GetPropertyStr, JS_NewContext, JS_NewRuntime, JS_SetContextOpaque,
-    JS_SetInterruptHandler, JS_SetMaxStackSize, JS_SetMemoryLimit, JS_SetModuleLoaderFunc,
-    JS_SetPropertyStr, JS_TAG_MODULE, JS_TAG_NULL, JS_TAG_UNDEFINED, JS_ToCStringLen2, JSContext,
-    JSModuleDef, JSRuntime, JSValue, js_malloc, rqjs_free_value, rqjs_is_exception,
-    rqjs_is_function, rqjs_json_stringify, rqjs_new_c_function_magic, rqjs_parse_json,
-    rqjs_throw_host_error, rqjs_throw_module_error, rqjs_value_ptr, rqjs_value_tag,
+    JS_ExecutePendingJob, JS_FreeCString, JS_FreeContext, JS_FreeRuntime, JS_GetContextOpaque,
+    JS_GetException, JS_GetGlobalObject, JS_GetPropertyStr, JS_IsJobPending, JS_NewContext,
+    JS_NewRuntime, JS_SetContextOpaque, JS_SetInterruptHandler, JS_SetMaxStackSize,
+    JS_SetMemoryLimit, JS_SetModuleLoaderFunc, JS_SetPropertyStr, JS_TAG_MODULE, JS_TAG_NULL,
+    JS_TAG_UNDEFINED, JS_ToCStringLen2, JSContext, JSModuleDef, JSRuntime, JSValue, js_malloc,
+    rqjs_free_value, rqjs_is_exception, rqjs_is_function, rqjs_json_stringify,
+    rqjs_new_c_function_magic, rqjs_parse_json, rqjs_throw_host_error, rqjs_throw_module_error,
+    rqjs_value_ptr, rqjs_value_tag,
 };
 
 type JsonHostFunction = dyn FnMut(&[Value]) -> Result<Value, String> + 'static;
@@ -458,6 +459,11 @@ impl JsEngine {
         })
     }
 
+    /// Remove module loading from an isolated page context.
+    pub fn disable_module_loading(&mut self) {
+        unsafe { JS_SetModuleLoaderFunc(self.runtime, None, None, ptr::null_mut()) };
+    }
+
     pub fn bundled_module_specifiers() -> impl Iterator<Item = &'static str> {
         EMBEDDED_MODULES.iter().map(|module| module.specifier)
     }
@@ -487,6 +493,35 @@ impl JsEngine {
         )?;
         unsafe { rqjs_free_value(self.context, value) };
         Ok(())
+    }
+
+    /// Run a bounded slice of Promise jobs; returns whether work remains.
+    pub fn pump_jobs(&mut self, limit: usize, timeout: Duration) -> Result<bool, JsError> {
+        self.host_state.execution_interrupted = false;
+        self.host_state.execution_deadline = Some(Instant::now() + timeout);
+        let mut result = Ok(false);
+        for _ in 0..limit {
+            let mut context = self.context;
+            let code = unsafe { JS_ExecutePendingJob(self.runtime, &mut context) };
+            if code < 0 {
+                result = Err(self.take_exception());
+                break;
+            }
+            if code == 0
+                || self
+                    .host_state
+                    .execution_deadline
+                    .is_some_and(|d| Instant::now() >= d)
+            {
+                break;
+            }
+        }
+        self.host_state.execution_deadline = None;
+        if self.host_state.execution_interrupted {
+            return Err(JsError::ExecutionTimedOut(timeout));
+        }
+        result?;
+        Ok(unsafe { JS_IsJobPending(self.runtime) } != 0)
     }
 
     /// Evaluates a classic script and applies JavaScript `String(...)` to its result.
@@ -657,15 +692,17 @@ impl JsEngine {
                 flags,
             )
         };
-        self.host_state.execution_deadline = None;
         if unsafe { rqjs_is_exception(value) } != 0 {
+            // Exception stringification can itself invoke page-defined getters.
             let error = self.take_exception();
+            self.host_state.execution_deadline = None;
             if self.host_state.execution_interrupted {
                 Err(JsError::ExecutionTimedOut(timeout.unwrap_or_default()))
             } else {
                 Err(error)
             }
         } else {
+            self.host_state.execution_deadline = None;
             Ok(value)
         }
     }
