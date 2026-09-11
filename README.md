@@ -251,3 +251,23 @@ text/contour views. The Blueprint build and 15 host tests passed. The internal
 `solara-native` app entry runs this visual build without replacing the installed
 Solara entry. The earlier large FlowAndForms draw hit GPU `-12`; compact
 viewport geometry and bounded indexed draws allowed all four frames to render.
+
+### Native image context menu
+
+Right-click a loaded PNG/JPEG and choose **OPEN IMG** to open the original image
+in the resident `img` viewer, in a separate VM and UI4 frame. The browser keeps
+its zoom and collapse entries; OPEN IMG is disabled outside loaded image content
+and while an image-open operation is pending.
+
+Solara uses UI4's dynamic context-menu registration: the kernel sends a frozen
+frame-local click point and invocation serial, the app replies with its entries,
+and the kernel renders and completes the menu. Image hit testing accounts for
+zoom, scrolling, object-fit, transforms, and DOM occlusion. The clicked encoded
+resource is retained for that invocation, so moving the cursor cannot change
+which image opens. Navigation dismisses the outstanding menu.
+
+The original loaded bytes are saved under `apps/common/solara/open-images/`
+before the existing `vshell::open_images` request launches the viewer. Those
+copies remain in TRUEOSFS, allowing the viewer to outlive the browser. No second
+HTTP request is made. This requires a kernel providing the additive dynamic
+context-menu v2 ABI; Grid's existing fixed-menu API remains compatible.

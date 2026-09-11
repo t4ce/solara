@@ -6,7 +6,12 @@ use solara::{
     navigation::{BuiltInDemo, NavigationTarget},
     spec_layout::{SpecLayout, Viewport},
 };
-use std::sync::Arc;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 use trueos::ui4_scene::{Damage, Error as UiError, Frame, MenuEntry, ResizeEvent};
 use trueos::vgpu::{self, Buffer, Device, Queue, QueueClass, RenderPipeline, ShaderModule};
 
@@ -35,14 +40,70 @@ const BROWSER_CADENCE_MS: u64 = 250;
 struct MenuState {
     zoom_delta: i32,
     collapse: bool,
+    open_image: bool,
 }
-fn menu_entries() -> [MenuEntry<'static, MenuState>; 3] {
+fn menu_entries(image: bool) -> [MenuEntry<'static, MenuState>; 4] {
     [
         MenuEntry::new("+", |s| s.zoom_delta += 10),
         MenuEntry::new("-", |s| s.zoom_delta -= 10),
         MenuEntry::new("collapse", |s| s.collapse = true),
+        if image {
+            MenuEntry::new("OPEN IMG", |s| s.open_image = true)
+        } else {
+            MenuEntry::disabled("OPEN IMG")
+        },
     ]
 }
+struct ImageMenu {
+    serial: u64,
+    image: Option<Arc<Vec<u8>>>,
+}
+
+type ImageOpening = Pin<Box<dyn Future<Output = Result<(), String>>>>;
+
+/// Commit the clicked resource before asking the kernel to launch img. Paths
+/// live in shared TRUEOSFS so the new VM can read them independently of Solara.
+async fn open_loaded_image(bytes: Arc<Vec<u8>>) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use trueos::async_fs;
+    static NEXT_IMAGE: AtomicU64 = AtomicU64::new(1);
+    let (extension, content_type) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ("png", async_fs::ContentTypeId::PNG)
+    } else {
+        ("jpg", async_fs::ContentTypeId::JPEG)
+    };
+    let directory = "apps/common/solara/open-images";
+    async_fs::create_dir_all(directory.as_bytes())
+        .await
+        .map_err(|e| format!("image directory: {e}"))?;
+    let path = loop {
+        let sequence = NEXT_IMAGE.fetch_add(1, Ordering::Relaxed);
+        let path = format!(
+            "{directory}/{}-{}-{sequence}.{extension}",
+            trueos::ui4_scene::worker_slot(),
+            trueos::clock::monotonic_millis()
+        );
+        if !async_fs::exists(path.as_bytes())
+            .await
+            .map_err(|e| format!("image path: {e}"))?
+        {
+            break path;
+        }
+    };
+    async_fs::write_file_typed(path.as_bytes(), &bytes, content_type)
+        .await
+        .map_err(|e| format!("image save: {e}"))?;
+    if let Err(error) = trueos::vshell::open_images(std::slice::from_ref(&path)) {
+        let _ = async_fs::remove(path.as_bytes()).await;
+        return Err(format!("img launch: {error}"));
+    }
+    crate::parser_probe::report_info(format_args!(
+        "solara: OPEN IMG queued source={path} bytes={}",
+        bytes.len()
+    ));
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct Expanded {
     x: i32,
@@ -61,6 +122,8 @@ struct Window {
     script_error: Option<String>,
     script_press: Option<solara::spec_layout::NodeId>,
     menu: MenuState,
+    image_menu: Option<ImageMenu>,
+    opening_image: Option<ImageOpening>,
     zoom_percent: i32,
     needs_reflow: bool,
     expanded: Option<Expanded>,
@@ -145,7 +208,7 @@ impl Window {
             return Err(Error::Other("stylesheets still pending".into()));
         }
         let mut frame = Frame::open_streaming(x, y, width, height)?;
-        frame.register_context_menu(&menu_entries())?;
+        frame.register_dynamic_context_menu()?;
         let device = Device::open(vgpu::Capabilities::DEFAULT.union(vgpu::Capabilities::PRESENT))?;
         let queue = device.create_queue(QueueClass::Render)?;
         let shader = device
@@ -174,6 +237,8 @@ impl Window {
             script_error: None,
             script_press: None,
             menu: MenuState::default(),
+            image_menu: None,
+            opening_image: None,
             zoom_percent: 100,
             needs_reflow: false,
             expanded: None,
@@ -317,10 +382,63 @@ impl Window {
         }
         Ok(())
     }
+    fn tick_context_menu(&mut self) -> Result<(), Error> {
+        if let Some(opening) = &mut self.opening_image {
+            if let Poll::Ready(result) = opening
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+            {
+                self.opening_image = None;
+                if let Err(error) = result {
+                    crate::parser_probe::report_error(format_args!(
+                        "solara: OPEN IMG failed: {error}"
+                    ));
+                }
+            }
+        }
+        while let Some(event) = self.frame.take_dynamic_context_menu_event()? {
+            if event.closed.is_none() {
+                let point = [
+                    event.local_x as f32 / self.zoom(),
+                    event.local_y as f32 / self.zoom() + self.scroll_y,
+                ];
+                let image = if self.expanded.is_none() && self.opening_image.is_none() {
+                    self.mesh
+                        .image_at(self.layout.document(), point)
+                        .and_then(|quad| self.images.textures.get(&quad.url))
+                        .map(|texture| texture.encoded.clone())
+                } else {
+                    None
+                };
+                if self
+                    .frame
+                    .resolve_context_menu(event.serial, &menu_entries(image.is_some()))?
+                {
+                    self.image_menu = Some(ImageMenu {
+                        serial: event.serial,
+                        image,
+                    });
+                }
+            } else if self
+                .image_menu
+                .as_ref()
+                .is_some_and(|menu| menu.serial == event.serial)
+            {
+                let menu = self.image_menu.take().expect("matching menu serial");
+                event.dispatch(&menu_entries(menu.image.is_some()), &mut self.menu);
+                if core::mem::take(&mut self.menu.open_image) {
+                    if let Some(image) = menu.image {
+                        self.opening_image = Some(Box::pin(open_loaded_image(image)));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn tick(&mut self) -> Result<(), Error> {
         let started = trueos::clock::Instant::now();
-        self.frame
-            .pump_context_menu(&menu_entries(), &mut self.menu)?;
+        self.tick_context_menu()?;
         let zoom_delta = core::mem::take(&mut self.menu.zoom_delta);
         if zoom_delta != 0 {
             self.zoom_percent = (self.zoom_percent + zoom_delta).clamp(10, 500);
@@ -857,6 +975,13 @@ impl Window {
         } else {
             None
         };
+        self.frame
+            .clear_context_menu()
+            .map_err(|e| format!("clear image menu: {e:?}"))?;
+        self.frame
+            .register_dynamic_context_menu()
+            .map_err(|e| format!("register image menu: {e:?}"))?;
+        self.image_menu = None;
         self.script_press = None;
         self.images.release(self.device);
         self.favicon.navigate(resources.favicon.clone());

@@ -32,12 +32,29 @@ pub struct PageMesh {
 /// One image's content quad in document coordinates, with cropped UVs.
 #[derive(Clone, Debug)]
 pub struct ImageQuad {
+    pub node_id: NodeId,
     pub url: String,
     pub corners: [[f32; 2]; 4],
     pub uv: [[f32; 2]; 4],
 }
 
 impl ImageQuad {
+    /// Test the painted content quad, excluding object-fit letterboxing.
+    pub fn contains(&self, point: [f32; 2]) -> bool {
+        let mut positive = false;
+        let mut negative = false;
+        let mut area = 0.0;
+        for i in 0..4 {
+            let a = self.corners[i];
+            let b = self.corners[(i + 1) % 4];
+            let cross = (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0]);
+            positive |= cross > 0.0;
+            negative |= cross < 0.0;
+            area += a[0] * b[1] - b[0] * a[1];
+        }
+        area.abs() > f32::EPSILON && !(positive && negative)
+    }
+
     pub fn visible(&self, width: f32, height: f32, scroll_y: f32) -> bool {
         self.corners.iter().any(|p| p[0] >= 0.0)
             && self.corners.iter().any(|p| p[0] <= width)
@@ -56,6 +73,16 @@ pub fn raster_image_url(url: &url::Url) -> bool {
 }
 
 impl PageMesh {
+    /// Use DOM hit testing for clipping/occlusion, then the painted image
+    /// content for object-fit and CSS transforms. The point is in CSS pixels.
+    pub fn image_at(&self, doc: &BaseDocument, point: [f32; 2]) -> Option<&ImageQuad> {
+        let hit = doc.hit(point[0], point[1])?;
+        self.images
+            .iter()
+            .rev()
+            .find(|image| image.node_id == hit.node_id && image.contains(point))
+    }
+
     /// Cull without sorting by color: overlapping boxes must keep painter order.
     pub fn viewport(&self, width: f32, height: f32, scroll_y: f32) -> Self {
         let mut out = Self {
@@ -328,6 +355,7 @@ impl Painter {
                     let bottom = (dy + dh).min(h);
                     if right > left && bottom > top {
                         mesh.images.push(ImageQuad {
+                            node_id: node.id,
                             url: url.into(),
                             corners: [
                                 [x + left, y + top],

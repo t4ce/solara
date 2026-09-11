@@ -239,6 +239,11 @@ fn decoded_images_reflow_and_crop_without_rebuilding_glyphs_on_scroll() {
     assert!((cover.uv[2][1] - 0.8).abs() < 0.001);
     let contain = &mesh.images[2];
     assert!((contain.corners[0][0] - 50.0).abs() < 0.01);
+    let point = [contain.corners[0][0] + 10.0, contain.corners[0][1] + 10.0];
+    assert_eq!(
+        mesh.image_at(layout.document(), point).unwrap().node_id,
+        contain.node_id
+    );
     assert!(!contain.visible(400.0, 300.0, 0.0));
     assert!(contain.visible(400.0, 300.0, 800.0));
     assert_eq!(contain.uv, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
@@ -559,4 +564,80 @@ fn negative_z_children_paint_between_parent_background_and_text() {
         .rposition(|c| *c == 0xff00ff00)
         .unwrap();
     assert!(last_green < last_blue && last_blue < first_red);
+}
+
+#[test]
+fn image_context_hits_only_loaded_visible_content() {
+    let mut layout = document(
+        r#"<html><head><style>
+        body { margin:0 } img { display:block;width:200px;height:100px;object-fit:contain }
+        #cover { position:absolute;left:90px;top:20px;width:20px;height:20px;background:red }
+        </style></head><body><img src="cat.png"><div id="cover"></div></body></html>"#,
+    );
+    let mut painter = Painter::default();
+    let mesh = painter.paint(layout.document()).unwrap();
+    assert!(mesh.image_at(layout.document(), [75.0, 25.0]).is_none());
+    layout.load_image(
+        "trueos://solara/docs/cat.png".into(),
+        40,
+        40,
+        std::sync::Arc::new(vec![255; 40 * 40 * 4]),
+    );
+    assert!(layout.resolve(0.0).unwrap());
+    let mesh = painter.paint(layout.document()).unwrap();
+    assert_eq!(
+        mesh.image_at(layout.document(), [75.0, 25.0]).unwrap().url,
+        "trueos://solara/docs/cat.png"
+    );
+    assert!(
+        mesh.image_at(layout.document(), [25.0, 25.0]).is_none(),
+        "letterbox"
+    );
+    assert!(
+        mesh.image_at(layout.document(), [100.0, 30.0]).is_none(),
+        "occluding element"
+    );
+    assert!(
+        mesh.image_at(layout.document(), [250.0, 25.0]).is_none(),
+        "outside image"
+    );
+}
+
+#[test]
+fn transformed_image_quad_rejects_bounding_box_corners_and_degenerate_quads() {
+    let mut layout = document(
+        r#"<html><head><style>
+        body { margin:0 } img { width:80px;height:80px;transform:translate(100px,100px) rotate(45deg) }
+        </style></head><body><img src="cat.png"></body></html>"#,
+    );
+    layout.load_image(
+        "trueos://solara/docs/cat.png".into(),
+        80,
+        80,
+        std::sync::Arc::new(vec![255; 80 * 80 * 4]),
+    );
+    assert!(layout.resolve(0.0).unwrap());
+    let mesh = Painter::default().paint(layout.document()).unwrap();
+    let image = &mesh.images[0];
+    let center = [
+        image.corners.iter().map(|p| p[0]).sum::<f32>() / 4.0,
+        image.corners.iter().map(|p| p[1]).sum::<f32>() / 4.0,
+    ];
+    assert!(image.contains(center));
+    let corner = [
+        image
+            .corners
+            .iter()
+            .map(|p| p[0])
+            .fold(f32::INFINITY, f32::min),
+        image
+            .corners
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::INFINITY, f32::min),
+    ];
+    assert!(!image.contains(corner));
+    let mut collapsed = image.clone();
+    collapsed.corners = [[10.0, 10.0]; 4];
+    assert!(!collapsed.contains([10.0, 10.0]));
 }

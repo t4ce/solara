@@ -128,7 +128,11 @@ pub(crate) async fn fetch_bytes_limited(url: String, max_bytes: usize) -> Result
     })
     .await
 }
-async fn load(url: String) -> Result<vmedia::DecodedImage, String> {
+struct LoadedImage {
+    decoded: vmedia::DecodedImage,
+    encoded: Arc<Vec<u8>>,
+}
+async fn load(url: String) -> Result<LoadedImage, String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     let bytes = if parsed.scheme() == "trueos"
         && parsed.host_str() == Some("solara")
@@ -149,15 +153,20 @@ async fn load(url: String) -> Result<vmedia::DecodedImage, String> {
     } else {
         return Err("unsupported image signature".into());
     };
-    vmedia::decode(format, &bytes)
+    let decoded = vmedia::decode(format, &bytes)
         .await
-        .map_err(|e| format!("kernel image decode: {e}"))
+        .map_err(|e| format!("kernel image decode: {e}"))?;
+    Ok(LoadedImage {
+        decoded,
+        encoded: Arc::new(bytes),
+    })
 }
 struct Pending {
     url: String,
-    future: Pin<Box<dyn Future<Output = Result<vmedia::DecodedImage, String>>>>,
+    future: Pin<Box<dyn Future<Output = Result<LoadedImage, String>>>>,
 }
 pub(crate) struct Texture {
+    pub encoded: Arc<Vec<u8>>,
     pub buffer: Buffer,
     pub width: u32,
     pub height: u32,
@@ -202,7 +211,7 @@ impl Images {
             };
             let pending = self.pending.remove(index);
             match result {
-                Ok(decoded) => {
+                Ok(LoadedImage { decoded, encoded }) => {
                     let info = decoded.info;
                     // Sample the decoded buffer before upload so a partial decode
                     // can be distinguished from a texture/rendering failure.
@@ -225,6 +234,22 @@ impl Images {
                             pixel(info.height.saturating_sub(1))
                         ),
                     );
+                    // Retained encoded resources back OPEN IMG snapshots. Bound
+                    // them independently: a tiny texture can contain a large
+                    // encoded metadata payload.
+                    let encoded_used: usize = self
+                        .textures
+                        .values()
+                        .map(|texture| texture.encoded.len())
+                        .sum();
+                    if encoded.len() > image_upload::PAGE_TEXTURE_BYTES.saturating_sub(encoded_used)
+                    {
+                        crate::parser_probe::report_error(format_args!(
+                            "solara: image-failed url={} encoded-resource-budget",
+                            pending.url
+                        ));
+                        continue;
+                    }
                     let used: usize = self
                         .textures
                         .values()
@@ -273,6 +298,7 @@ impl Images {
                     self.textures.insert(
                         pending.url.clone(),
                         Texture {
+                            encoded,
                             buffer,
                             width: texture_width,
                             height: texture_height,
