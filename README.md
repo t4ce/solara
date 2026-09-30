@@ -87,6 +87,16 @@ a direct run opens the single-tab navigator. The explicit `native-demos` feature
 retains four independent, tiled UI4 frames: `FrameworkLayout.html`,
 `TextAndBorders.html`, `DivsAndPanels.html`, and `FlowAndForms.html`. Navigation uses the same drawing path.
 
+For a Linux window backed by the same `native_paint::PageMesh`, run
+`cargo run --locked --features linux-window --bin solara-linux -- https://chatgpt.com/`.
+The host path fetches HTML and linked resources, resolves the retained Blitz
+document, then presents its solids and Parley glyphs with Winit, Softbuffer,
+and Tiny Skia. Mouse wheel scrolls, resize reflows, and Escape closes the
+window. The URL can be replaced on the command line. This presenter currently
+does not execute page scripts or draw decoded images, so JavaScript-driven
+sites show their initial HTML shell. The normal Linux `solara` binary remains
+the headless corpus probe.
+
 The native painter uses authored text colors, solid backgrounds, rounded
 background outlines, and computed border widths/colors. It traverses Blitz's
 paint children and stacking contexts; contiguous equal-color triangles share

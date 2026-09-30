@@ -1,11 +1,13 @@
 # Repository Guidelines
 
-> Branch note (`true`): Linux retains the headless RustQJSDom + Blitz/Stylo
-> probe. On TRUEOS the default `spec-layout` feature opens one UI4 browser tab
+> Branch note (`true`): Linux retains the default headless RustQJSDom + Blitz/Stylo
+> probe and has an optional `linux-window` presenter for the retained paint mesh.
+> On TRUEOS the default `spec-layout` feature opens one UI4 browser tab
 > with a terminal navigator and bundled logo page; `native-demos` selects the
 > separate four-frame corpus. Navigation stays inside the same VMX/QJS instance. `native_paint.rs`
 > and `native_window.rs` provide the new native path. The legacy `gpu_ui/`,
-> WGPU and Linux window paths remain inactive.
+> WGPU path remains inactive; the Linux presenter uses Winit, Softbuffer, and
+> Tiny Skia behind an explicit feature.
 
 ## Project Structure & Module Organization
 
@@ -43,8 +45,9 @@ Use `rustfmt` defaults (four-space indentation) and keep modules focused on one 
 Add focused unit tests in a colocated `#[cfg(test)] mod tests`. Use descriptive
 names and add integration tests under `tests/` when behavior crosses module
 boundaries. Keep host tests headless and separate from the native demo. Validate that all
-five artifacts reach the handoff with measured text/boxes and that the dependency
-graph remains free of WGPU and Winit. `tests/spec_layout.rs` checks reflow, style
+five artifacts reach the handoff with measured text/boxes and that the default
+dependency graph remains free of WGPU and Winit. The `linux-window` feature
+adds Winit only for the host presenter. `tests/spec_layout.rs` checks reflow, style
 invalidation, original stylesheet ordering, retained fonts and animation sampling.
 
 ## Commit & Pull Request Guidelines

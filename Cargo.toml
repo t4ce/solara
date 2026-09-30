@@ -70,6 +70,8 @@ spec-layout = ["dep:blitz-dom", "dep:blitz-traits", "dep:parley", "dep:linebende
 trueos-first = []
 # Explicit visual corpus; normal launches open the homepage and navigator.
 native-demos = ["spec-layout"]
+# Small host window for inspecting the retained Blitz/Parley paint mesh.
+linux-window = ["spec-layout", "dep:winit", "dep:softbuffer", "dep:tiny-skia", "dep:ureq", "dep:base64"]
 
 [[bin]]
 name = "solara"
@@ -78,6 +80,18 @@ path = "src/main.rs"
 [[example]]
 name = "page_probe"
 required-features = ["spec-layout"]
+
+[[bin]]
+name = "solara-linux"
+path = "src/bin/solara_linux.rs"
+required-features = ["linux-window"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30.13", optional = true }
+softbuffer = { version = "0.4.8", optional = true }
+tiny-skia = { version = "0.12.0", optional = true }
+ureq = { version = "3.4.0", optional = true }
+base64 = { version = "0.23.1", optional = true }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api" }
