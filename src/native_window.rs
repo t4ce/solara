@@ -1079,7 +1079,28 @@ pub(crate) fn run_browser() -> Result<(), String> {
                 NavigationTarget::Web(url) => {
                     fetching = Some((
                         url.clone(),
-                        Box::pin(crate::native_images::fetch_bytes(url.into())),
+                        Box::pin(async move {
+                            let bytes = crate::native_images::fetch_bytes(url.to_string()).await?;
+                            if solara::watch_media::is_watch(&url) {
+                                let html = String::from_utf8(bytes)
+                                    .map_err(|_| "Watch page is not UTF-8")?;
+                                let player = solara::watch_media::player_frame(&html, &url)?;
+                                let html = String::from_utf8(
+                                    crate::native_images::fetch_bytes_limited(
+                                        player.to_string(),
+                                        1024 * 1024,
+                                    )
+                                    .await?,
+                                )
+                                .map_err(|_| "Player is not UTF-8")?;
+                                let media = solara::watch_media::media_source(&html, &player)?;
+                                // Handoff is deferred until the future is polled ready;
+                                // replacing navigation cancels outstanding resolution.
+                                Ok(media.to_string().into_bytes())
+                            } else {
+                                Ok(bytes)
+                            }
+                        }),
                     ));
                 }
                 NavigationTarget::Demo(demo) => {
@@ -1110,6 +1131,21 @@ pub(crate) fn run_browser() -> Result<(), String> {
                 .poll(&mut Context::from_waker(Waker::noop()))
         {
             let (url, _) = fetching.take().expect("polled request");
+            if solara::watch_media::is_watch(&url) {
+                let result = result
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|_| "Invalid media URL".into())
+                    })
+                    .and_then(|media| {
+                        trueos::vshell::play_video_url(&media)
+                            .map_err(|e| format!("Video handoff failed: {e}"))
+                    });
+                navigator.status(match result {
+                    Ok(()) => "Video queued".to_owned(),
+                    Err(e) => format!("Video unavailable: {e}"),
+                });
+                continue;
+            }
             match result
                 .and_then(|bytes| {
                     String::from_utf8(bytes).map_err(|_| "Page is not UTF-8 HTML".into())

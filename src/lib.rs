@@ -16,3 +16,6 @@ pub mod page_runtime;
 
 #[cfg(feature = "spec-layout")]
 pub mod image_upload;
+
+/// Bounded, renderer-free watch page media resolver.
+pub mod watch_media;

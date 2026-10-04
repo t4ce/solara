@@ -281,3 +281,28 @@ before the existing `vshell::open_images` request launches the viewer. Those
 copies remain in TRUEOSFS, allowing the viewer to outlive the browser. No second
 HTTP request is made. This requires a kernel providing the additive dynamic
 context-menu v2 ABI; Grid's existing fixed-menu API remains compatible.
+
+Watch-media navigation accepts `/watch/<numeric-id>` or the equivalent HTTPS
+Archivebate watch URL. The navigator displays the short path. This is a display
+alias; network requests and kernel diagnostics still use real URLs.
+
+This route skips page layout and follows the supported Mixdrop iframe. Only its
+packed `MDCore` configuration runs in a fresh QuickJS runtime (16 MiB heap,
+512 KiB stack, 250 ms per evaluation, no modules, DOM, filesystem or network).
+The browser validates the resulting HTTPS MP4 URL and queues it through
+`vshell::play_video_url`, using Shell2's existing three-slot AVC MP4 player.
+Navigation replacement cancels pending resolution; playback already queued is
+controlled with Space, Escape, or `vid stop`. The fixed `vid on` demo remains.
+
+The first adapter supports that iframe/bootstrap format, rather than arbitrary
+players, HLS, DRM, or all website JavaScript. Existing playback download limits
+apply (160 MiB); HTTP failures and unsupported codecs fail through the player.
+The supplied watch/player HTML resolved successfully during bringup, but the
+CDN returned HTTP 403 to host media probes, so actual native playback remains
+unverified. Both kernel and Blueprint SDK must include the HTTPS qualified-source
+ABI behavior. For a host-only resolver probe against locally fetched HTML:
+
+```sh
+cargo run --locked --no-default-features --example watch_resolve -- \
+  https://archivebate.com/watch/123 watch.html player.html
+```

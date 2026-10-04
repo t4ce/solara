@@ -11,7 +11,7 @@ pub enum NavigationTarget {
 impl std::fmt::Display for NavigationTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Web(url) => url.fmt(f),
+            Self::Web(url) => f.write_str(&crate::watch_media::display(url)),
             Self::Demo(demo) => demo.fmt(f),
         }
     }
@@ -52,11 +52,14 @@ pub struct Address {
 impl Address {
     pub fn set_url(&mut self, url: &Url) {
         self.http = url.scheme() == "http";
-        self.text = url
-            .as_str()
-            .split_once("://")
-            .map_or(url.as_str(), |(_, rest)| rest)
-            .into();
+        self.text = if crate::watch_media::is_watch(url) {
+            url.path().to_owned()
+        } else {
+            url.as_str()
+                .split_once("://")
+                .map_or(url.as_str(), |(_, rest)| rest)
+                .into()
+        };
         self.cursor = self.text.len();
         self.selected = false;
     }
@@ -139,6 +142,9 @@ impl Address {
         }
         if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err("Use one URL; encode spaces as %20".into());
+        }
+        if let Some(url) = crate::watch_media::shorthand(text) {
+            return Ok(url);
         }
         let input = if text.contains("://") {
             text.to_owned()
