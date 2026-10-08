@@ -644,7 +644,7 @@ fn transformed_image_quad_rejects_bounding_box_corners_and_degenerate_quads() {
 
 #[test]
 fn watch_projection_retains_video_source_and_measured_dom_box() {
-    let page = url::Url::parse("https://example.test/watch/123").unwrap();
+    let page = url::Url::parse("http://example.test/watch/123").unwrap();
     let source = url::Url::parse("https://cdn.example.test/movie.mp4?token=a&expires=123").unwrap();
     let html = solara::watch_media::video_document(&page, &source).unwrap();
     let mut layout = document(&html);

@@ -146,11 +146,14 @@ impl Address {
             return Err("Use one URL; encode spaces as %20".into());
         }
         if text.starts_with('/') && text.contains("/watch/") {
-            return self
+            let mut url = self
                 .base
                 .as_ref()
                 .and_then(|base| crate::watch_media::shorthand(text, base))
-                .ok_or_else(|| "Enter a full HTTPS watch URL first".into());
+                .ok_or("Enter a full HTTP or HTTPS watch URL first")?;
+            url.set_scheme(if self.http { "http" } else { "https" })
+                .map_err(|_| "Could not select the watch URL protocol")?;
+            return Ok(url);
         }
         let input = if text.contains("://") {
             text.to_owned()
@@ -201,6 +204,14 @@ mod tests {
         a.set_url(&first);
         assert_eq!(a.text, "/watch/clip?token=abc");
         assert_eq!(a.url().unwrap(), first);
+        a.toggle();
+        assert_eq!(a.text, "/watch/clip?token=abc");
+        assert_eq!(
+            a.url().unwrap().as_str(),
+            "http://one.example:8443/watch/clip?token=abc"
+        );
+        a.toggle();
+        assert_eq!(a.url().unwrap(), first);
         a.select_all();
         a.insert("/watch/next");
         assert_eq!(
@@ -209,6 +220,15 @@ mod tests {
         );
         a.set_url(&Url::parse("https://two.example/watch/clip").unwrap());
         assert_eq!(a.url().unwrap().host_str(), Some("two.example"));
+        let http = Url::parse("http://three.example/watch/clip").unwrap();
+        a.set_url(&http);
+        assert_eq!(a.text, "/watch/clip");
+        assert_eq!(a.url().unwrap(), http);
+        a.toggle();
+        assert_eq!(
+            a.url().unwrap().as_str(),
+            "https://three.example/watch/clip"
+        );
     }
     #[test]
     fn editing_unicode_and_replacing_selection() {

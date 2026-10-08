@@ -282,7 +282,7 @@ copies remain in TRUEOSFS, allowing the viewer to outlive the browser. No second
 HTTP request is made. This requires a kernel providing the additive dynamic
 context-menu v2 ABI; Grid's existing fixed-menu API remains compatible.
 
-Watch-media navigation matches the `/watch/` path segment on any HTTPS host.
+Watch-media navigation matches the `/watch/` path segment on any HTTP or HTTPS host.
 Enter a full URL initially; the navigator displays the short path and remembers
 its origin for subsequent path edits. There is no built-in site or numeric-ID
 mapping. Network requests and kernel diagnostics still use the supplied URLs.
