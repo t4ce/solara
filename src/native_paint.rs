@@ -24,6 +24,8 @@ pub struct PageMesh {
     pub triangle_colors: Vec<u32>,
     pub canvas_color: u32,
     pub images: Vec<ImageQuad>,
+    /// Media elements retain their DOM identity and measured content rectangle.
+    pub videos: Vec<ImageQuad>,
     pub boxes: usize,
     pub glyphs: usize,
     pub height: f32,
@@ -301,6 +303,46 @@ impl Painter {
             }
             if !content {
                 continue;
+            }
+            if let Some(element) = node.element_data()
+                && element.name.local.as_ref() == "video"
+            {
+                let src = element
+                    .attrs()
+                    .iter()
+                    .find(|a| a.name.local.as_ref() == "src")
+                    .map(|a| a.value.as_str())
+                    .or_else(|| {
+                        node.children.iter().find_map(|id| {
+                            let element = doc.get_node(*id)?.element_data()?;
+                            if element.name.local.as_ref() != "source" {
+                                return None;
+                            }
+                            element
+                                .attrs()
+                                .iter()
+                                .find(|a| a.name.local.as_ref() == "src")
+                                .map(|a| a.value.as_str())
+                        })
+                    });
+                if let Some(url) = src.and_then(|s| doc.base_url().join(s).ok())
+                    && url.scheme() == "https"
+                    && url.path().ends_with(".mp4")
+                {
+                    let x = layout.border.left + layout.padding.left;
+                    let y = layout.border.top + layout.padding.top;
+                    let w = layout.size.width - x - layout.border.right - layout.padding.right;
+                    let h = layout.size.height - y - layout.border.bottom - layout.padding.bottom;
+                    if w > 0.0 && h > 0.0 {
+                        mesh.videos.push(ImageQuad {
+                            node_id: node.id,
+                            url: url.into(),
+                            corners: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+                                .map(|p| transform_point(transform, p)),
+                            uv: [[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
+                        });
+                    }
+                }
             }
             if let Some(element) = node.element_data()
                 && element.name.local.as_ref() == "img"

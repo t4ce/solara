@@ -118,6 +118,8 @@ struct Swoop {
 }
 
 struct Window {
+    video: Option<crate::native_video::VideoSurface>,
+    video_source: Option<String>,
     scripts: Option<crate::native_scripts::Scripts>,
     script_error: Option<String>,
     script_press: Option<solara::spec_layout::NodeId>,
@@ -233,6 +235,8 @@ impl Window {
         let mut favicon = crate::native_favicon::Favicon::default();
         favicon.navigate(resources.favicon.clone());
         Ok(Self {
+            video: None,
+            video_source: None,
             scripts: None,
             script_error: None,
             script_press: None,
@@ -286,6 +290,8 @@ impl Window {
         }
     }
     fn collapse(&mut self) -> Result<(), Error> {
+        self.video = None;
+        self.video_source = None;
         let (x, y) = self.frame.position()?;
         let expanded = Expanded {
             x,
@@ -623,6 +629,7 @@ impl Window {
             self.dirty = true;
             self.uploaded = false;
         }
+        self.tick_video()?;
         if !self.dirty {
             return Ok(());
         }
@@ -681,6 +688,42 @@ impl Window {
             started.elapsed().as_micros()
         ));
         self.dirty = false;
+        Ok(())
+    }
+    fn tick_video(&mut self) -> Result<(), Error> {
+        let Some(quad) = self.mesh.videos.first().cloned() else {
+            self.video = None;
+            self.video_source = None;
+            return Ok(());
+        };
+        let (x, y) = self.frame.position()?;
+        let zoom = self.zoom();
+        let rect = [
+            x + (quad.corners[0][0] * zoom) as i32,
+            y + ((quad.corners[0][1] - self.scroll_y) * zoom) as i32,
+            ((quad.corners[1][0] - quad.corners[0][0]) * zoom).max(1.) as i32,
+            ((quad.corners[3][1] - quad.corners[0][1]) * zoom).max(1.) as i32,
+        ];
+        if self.video_source.as_deref() != Some(quad.url.as_str()) {
+            self.video = None;
+            self.video_source = Some(quad.url.clone());
+            match crate::native_video::VideoSurface::open(self.device, self.queue, &quad.url, rect)
+            {
+                Ok(video) => self.video = Some(video),
+                Err(code) => self.script_error = Some(format!("Video open failed: {code}")),
+            }
+        }
+        if let Some(video) = &mut self.video {
+            if let Err(code) = video.tick(rect) {
+                if code != vgpu::ERR_BUSY {
+                    self.video = None;
+                    self.script_error = Some(format!("Video playback failed: {code}"));
+                }
+            }
+        }
+        if self.video.as_ref().is_some_and(|video| video.closed) {
+            self.video = None;
+        }
         Ok(())
     }
     fn draw_images(&mut self) -> Result<usize, Error> {
@@ -958,6 +1001,8 @@ fn page_layout(
 impl Window {
     fn navigate(&mut self, layout: SpecLayout, resources: Arc<Resources>) -> Result<(), String> {
         let mesh = self.painter.paint(layout.document())?;
+        self.video = None;
+        self.video_source = None;
         self.script_error = None;
         self.scripts = if matches!(layout.source_url().scheme(), "http" | "https") {
             match resources
@@ -1094,9 +1139,9 @@ pub(crate) fn run_browser() -> Result<(), String> {
                                 )
                                 .map_err(|_| "Player is not UTF-8")?;
                                 let media = solara::watch_media::media_source(&html, &player)?;
-                                // Handoff is deferred until the future is polled ready;
+                                // Projection is deferred until the future is polled ready;
                                 // replacing navigation cancels outstanding resolution.
-                                Ok(media.to_string().into_bytes())
+                                Ok(solara::watch_media::video_document(&url, &media)?.into_bytes())
                             } else {
                                 Ok(bytes)
                             }
@@ -1131,21 +1176,6 @@ pub(crate) fn run_browser() -> Result<(), String> {
                 .poll(&mut Context::from_waker(Waker::noop()))
         {
             let (url, _) = fetching.take().expect("polled request");
-            if solara::watch_media::is_watch(&url) {
-                let result = result
-                    .and_then(|bytes| {
-                        String::from_utf8(bytes).map_err(|_| "Invalid media URL".into())
-                    })
-                    .and_then(|media| {
-                        trueos::vshell::play_video_url(&media)
-                            .map_err(|e| format!("Video handoff failed: {e}"))
-                    });
-                navigator.status(match result {
-                    Ok(()) => "Video queued".to_owned(),
-                    Err(e) => format!("Video unavailable: {e}"),
-                });
-                continue;
-            }
             match result
                 .and_then(|bytes| {
                     String::from_utf8(bytes).map_err(|_| "Page is not UTF-8 HTML".into())
@@ -1206,9 +1236,9 @@ pub(crate) fn run_browser() -> Result<(), String> {
             window.failed = true;
         }
         if let Some(error) = window.script_error.take() {
-            navigator.status(format!("Page scripts stopped: {error}"));
+            navigator.status(format!("Page error: {error}"));
         }
-        trueos::vsys::sleep_ms(if window.swoop.is_some() {
+        trueos::vsys::sleep_ms(if window.swoop.is_some() || window.video.is_some() {
             16
         } else {
             BROWSER_CADENCE_MS

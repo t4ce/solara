@@ -641,3 +641,57 @@ fn transformed_image_quad_rejects_bounding_box_corners_and_degenerate_quads() {
     collapsed.corners = [[10.0, 10.0]; 4];
     assert!(!collapsed.contains([10.0, 10.0]));
 }
+
+#[test]
+fn watch_projection_retains_video_source_and_measured_dom_box() {
+    let page = url::Url::parse("https://example.test/watch/123").unwrap();
+    let source = url::Url::parse("https://cdn.example.test/movie.mp4?token=a&expires=123").unwrap();
+    let html = solara::watch_media::video_document(&page, &source).unwrap();
+    let mut layout = document(&html);
+    let mut painter = Painter::default();
+    let mesh = painter.paint(layout.document()).unwrap();
+    assert_eq!(mesh.videos.len(), 1);
+    assert!(mesh.images.is_empty());
+    let video = &mesh.videos[0];
+    assert_eq!(video.url, source.as_str());
+    assert_eq!(
+        layout
+            .document()
+            .get_node(video.node_id)
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .name
+            .local
+            .as_ref(),
+        "video"
+    );
+    assert!((video.corners[3][1] - video.corners[0][1] - 360.).abs() < 1.);
+    let original_width = video.corners[1][0] - video.corners[0][0];
+    layout
+        .set_viewport(Viewport {
+            window_size: (480, 640),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(layout.resolve(0.0).unwrap());
+    let mesh = painter.paint(layout.document()).unwrap();
+    assert_eq!(mesh.videos.len(), 1);
+    let video = &mesh.videos[0];
+    assert!(video.corners[1][0] - video.corners[0][0] < original_width);
+    assert_eq!(video.url, source.as_str());
+}
+
+#[test]
+fn hidden_video_and_non_https_source_do_not_create_native_surfaces() {
+    let layout = document(
+        "<style>video{display:block;width:320px;height:240px}.hidden{display:none}</style><video class='hidden' src='https://cdn.example.test/a.mp4'></video><video src='http://cdn.example.test/b.mp4'></video>",
+    );
+    assert!(
+        Painter::default()
+            .paint(layout.document())
+            .unwrap()
+            .videos
+            .is_empty()
+    );
+}

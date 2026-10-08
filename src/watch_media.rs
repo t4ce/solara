@@ -6,27 +6,21 @@ use url::Url;
 
 pub fn is_watch(url: &Url) -> bool {
     url.scheme() == "https"
-        && matches!(
-            url.host_str(),
-            Some("archivebate.com" | "www.archivebate.com")
-        )
+        && url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none()
-        && url.port().is_none()
-        && watch_path(url.path())
+        && url.path().contains("/watch/")
 }
-fn watch_path(path: &str) -> bool {
-    path.strip_prefix("/watch/")
-        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-}
-pub fn shorthand(text: &str) -> Option<Url> {
-    watch_path(text)
-        .then(|| Url::parse(&format!("https://archivebate.com{text}")).ok())
+/// Resolve a displayed watch path against the address's remembered origin.
+pub fn shorthand(text: &str, base: &Url) -> Option<Url> {
+    text.starts_with('/')
+        .then(|| base.join(text).ok())
         .flatten()
+        .filter(is_watch)
 }
 pub fn display(url: &Url) -> String {
     if is_watch(url) {
-        url.path().to_owned()
+        url[url::Position::BeforePath..].to_owned()
     } else {
         url.to_string()
     }
@@ -134,24 +128,66 @@ pub fn media_source(html: &str, player: &Url) -> Result<Url, String> {
     Ok(url)
 }
 
+/// Project the resolved source into a real, minimal HTML video document.
+/// The original site is used only for resolution; its layout and ad scripts
+/// are not included. Attribute escaping preserves signed query parameters.
+pub fn video_document(page: &Url, source: &Url) -> Result<String, String> {
+    if !is_watch(page)
+        || source.scheme() != "https"
+        || source.host_str().is_none()
+        || !source.username().is_empty()
+        || source.password().is_some()
+        || !source.path().ends_with(".mp4")
+    {
+        return Err("Unsupported watch media projection".into());
+    }
+    fn escape(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+    Ok(format!(
+        r#"<!doctype html><html><head><title>Solara watch video</title><style>
+body {{ margin:12px; background:#fff; color:#222; font-size:18px; }}
+h1 {{ font-size:20px; margin:0 0 12px; }}
+video {{ display:block; width:100%; height:360px; max-height:calc(100vh - 80px); background:#000; }}
+</style></head><body><h1>{}</h1><video width="640" height="360" controls autoplay playsinline>
+<source src="{}" type="video/mp4">Video playback is unavailable.
+</video></body></html>"#,
+        escape(&display(page)),
+        escape(source.as_str())
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn mapping_is_exact() {
-        assert!(shorthand("/watch/123").is_some());
-        assert!(shorthand("/watch/123/other").is_none());
-        assert!(!is_watch(
-            &Url::parse("https://archivebate.com.evil.test/watch/123").unwrap()
-        ));
-        assert!(!is_watch(
-            &Url::parse("https://user@archivebate.com/watch/123").unwrap()
-        ));
-        assert_eq!(display(&shorthand("/watch/123").unwrap()), "/watch/123");
+    fn routing_uses_watch_path_on_any_https_host() {
+        for address in [
+            "https://one.example/watch/123",
+            "https://two.example:8443/watch/episode-one?token=abc",
+            "https://three.example/library/watch/clip",
+        ] {
+            let page = Url::parse(address).unwrap();
+            assert!(is_watch(&page));
+            assert_eq!(display(&page), page[url::Position::BeforePath..]);
+        }
+        for address in [
+            "https://example.test/watch?v=123",
+            "https://example.test/rewatch/123",
+            "https://example.test/?next=/watch/123",
+            "http://example.test/watch/123",
+            "https://user@example.test/watch/123",
+        ] {
+            assert!(!is_watch(&Url::parse(address).unwrap()));
+        }
     }
     #[test]
     fn iframe_and_packed_bootstrap() {
-        let page = shorthand("/watch/123").unwrap();
+        let page = Url::parse("https://example.test/watch/123").unwrap();
         let player = player_frame(r#"<iframe src="https://evil.test/e/ad"></iframe><iframe src="https://mixdrop.ag/e/fixture"></iframe>"#, &page).unwrap();
         let html = r#"<script>eval(function(p,a,c,k,e,d){return p}('MDCore.wurl="//cdn.example.test/fixture.mp4?token=abc";',0,0,[],0,{}))</script>"#;
         assert_eq!(

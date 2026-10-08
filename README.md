@@ -282,27 +282,44 @@ copies remain in TRUEOSFS, allowing the viewer to outlive the browser. No second
 HTTP request is made. This requires a kernel providing the additive dynamic
 context-menu v2 ABI; Grid's existing fixed-menu API remains compatible.
 
-Watch-media navigation accepts `/watch/<numeric-id>` or the equivalent HTTPS
-Archivebate watch URL. The navigator displays the short path. This is a display
-alias; network requests and kernel diagnostics still use real URLs.
+Watch-media navigation matches the `/watch/` path segment on any HTTPS host.
+Enter a full URL initially; the navigator displays the short path and remembers
+its origin for subsequent path edits. There is no built-in site or numeric-ID
+mapping. Network requests and kernel diagnostics still use the supplied URLs.
 
-This route skips page layout and follows the supported Mixdrop iframe. Only its
-packed `MDCore` configuration runs in a fresh QuickJS runtime (16 MiB heap,
-512 KiB stack, 250 ms per evaluation, no modules, DOM, filesystem or network).
-The browser validates the resulting HTTPS MP4 URL and queues it through
-`vshell::play_video_url`, using Shell2's existing three-slot AVC MP4 player.
-Navigation replacement cancels pending resolution; playback already queued is
-controlled with Space, Escape, or `vid stop`. The fixed `vid on` demo remains.
+This route follows the supported Mixdrop iframe. Only its packed `MDCore`
+configuration runs in a fresh QuickJS runtime (16 MiB heap, 512 KiB stack,
+250 ms per evaluation, no modules, DOM, filesystem or network). The resulting
+HTTPS MP4 is projected into a small spec HTML document with the watch path,
+a real `<video controls autoplay playsinline>` and `<source type="video/mp4">`.
+The original page and advertisement layout are omitted.
 
-The first adapter supports that iframe/bootstrap format, rather than arbitrary
-players, HLS, DRM, or all website JavaScript. Existing playback download limits
-apply (160 MiB); HTTP failures and unsupported codecs fail through the player.
-The supplied watch/player HTML resolved successfully during bringup, but the
-CDN returned HTTP 403 to host media probes, so actual native playback remains
-unverified. Both kernel and Blueprint SDK must include the HTTPS qualified-source
-ABI behavior. For a host-only resolver probe against locally fetched HTML:
+The native painter retains the video node's identity, source URL and measured
+content rectangle. Solara owns an independent UI4 video surface anchored to
+that rectangle, following browser movement, zoom and reflow. Closing or
+replacing the page drops its surface, texture lease and stream. Collapsing the
+browser stops video; expanding creates a fresh stream. The video surface's
+native context menu offers Pause/Play and Close video; seeking, audio, and full
+HTML media-control semantics are not implemented. It is a separate UI4 window,
+not a child compositor layer, so stacking/focus and clipping need hardware
+verification. Only the first visible-layout video is wired in this first step.
+
+The additive `vmedia::Video::open_url` protocol command (6) feeds the existing
+bounded online MP4 download/demux/decode path into the owner-scoped texture ring
+used by Picasso's video demo. Command 7 controls pause. Both the kernel and
+Blueprint SDK must include these commands; existing uploaded-video commands
+remain compatible. No decoded pixels are copied into the Blueprint. Each GPU
+submission retires before its texture lease can be replaced. The shared
+three-stream cap and existing AVC codec/160 MiB online download limits apply.
+This path buffers the online file before decoding; it is not progressive HTTP
+playback. The fixed `vid on` demo and `vid fs` player remain unchanged.
+
+Host projection/geometry tests, the native Blueprint build, and the kernel
+check pass. The Ubuntu resolver/playback proof succeeded for the supplied watch
+URL; this new native texture path still requires playback verification on an
+updated kernel. For a host-only resolver probe against locally fetched HTML:
 
 ```sh
 cargo run --locked --no-default-features --example watch_resolve -- \
-  https://archivebate.com/watch/123 watch.html player.html
+  https://example.test/watch/clip watch.html player.html
 ```

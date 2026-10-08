@@ -3,13 +3,15 @@
 #[cfg(feature = "spec-layout")]
 mod layout_probe;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
-mod native_scripts;
+mod native_favicon;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
 mod native_images;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
-mod native_favicon;
+mod native_scripts;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
 mod native_tui;
+#[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
+mod native_video;
 #[cfg(all(feature = "spec-layout", any(target_os = "trueos", target_os = "zkvm")))]
 mod native_window;
 mod page_script;

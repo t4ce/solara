@@ -48,12 +48,14 @@ pub struct Address {
     pub cursor: usize,
     pub http: bool,
     pub selected: bool,
+    base: Option<Url>,
 }
 impl Address {
     pub fn set_url(&mut self, url: &Url) {
+        self.base = Some(url.clone());
         self.http = url.scheme() == "http";
         self.text = if crate::watch_media::is_watch(url) {
-            url.path().to_owned()
+            crate::watch_media::display(url)
         } else {
             url.as_str()
                 .split_once("://")
@@ -143,8 +145,12 @@ impl Address {
         if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err("Use one URL; encode spaces as %20".into());
         }
-        if let Some(url) = crate::watch_media::shorthand(text) {
-            return Ok(url);
+        if text.starts_with('/') && text.contains("/watch/") {
+            return self
+                .base
+                .as_ref()
+                .and_then(|base| crate::watch_media::shorthand(text, base))
+                .ok_or_else(|| "Enter a full HTTPS watch URL first".into());
         }
         let input = if text.contains("://") {
             text.to_owned()
@@ -185,6 +191,24 @@ mod tests {
         a.insert("https://example.com:8443/path");
         a.toggle();
         assert_eq!(a.url().unwrap().as_str(), "http://example.com:8443/path");
+    }
+    #[test]
+    fn shortened_watch_paths_preserve_the_supplied_origin_and_query() {
+        let mut a = Address::default();
+        a.insert("/watch/clip");
+        assert!(a.url().is_err());
+        let first = Url::parse("https://one.example:8443/watch/clip?token=abc").unwrap();
+        a.set_url(&first);
+        assert_eq!(a.text, "/watch/clip?token=abc");
+        assert_eq!(a.url().unwrap(), first);
+        a.select_all();
+        a.insert("/watch/next");
+        assert_eq!(
+            a.url().unwrap().as_str(),
+            "https://one.example:8443/watch/next"
+        );
+        a.set_url(&Url::parse("https://two.example/watch/clip").unwrap());
+        assert_eq!(a.url().unwrap().host_str(), Some("two.example"));
     }
     #[test]
     fn editing_unicode_and_replacing_selection() {
