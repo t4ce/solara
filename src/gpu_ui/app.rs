@@ -71,7 +71,7 @@ pub fn run(input: Option<String>) -> Result<(), String> {
             (vec![page], None, None, Vec::new(), None, Some(cached))
         }
         Some(input) if input.starts_with('/') && input.contains("/watch/") => {
-            return Err("Use a full HTTPS watch URL to supply its host".into());
+            return Err("Use a full HTTP or HTTPS watch URL to supply its host".into());
         }
         Some(input) => {
             let watch_url = youtube_watch_url(input.as_str())?;

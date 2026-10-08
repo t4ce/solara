@@ -58,7 +58,7 @@ shows the URL, an advertised-resolution dropdown, and a size-respecting
 cargo run -- 'https://www.youtube.com/watch?v=nXvnof8fTBc'
 ```
 
-HTTPS URLs containing `/watch/` in their path also use the native video box and GStreamer decoder:
+HTTP or HTTPS URLs containing `/watch/` in their path also use the native video box and GStreamer decoder:
 
 ```bash
 cargo run -- 'https://example.test/watch/clip'

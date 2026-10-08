@@ -5,7 +5,7 @@ use std::time::Duration;
 use url::Url;
 
 pub fn is_watch(url: &Url) -> bool {
-    url.scheme() == "https"
+    matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && url.username().is_empty()
         && url.password().is_none()
@@ -125,9 +125,10 @@ pub fn media_source(html: &str, player: &Url) -> Result<Url, String> {
 mod tests {
     use super::*;
     #[test]
-    fn routing_uses_watch_path_on_any_https_host() {
+    fn routing_uses_watch_path_on_any_http_or_https_host() {
         for address in [
             "https://one.example/watch/123",
+            "http://one.example/watch/123",
             "https://two.example:8443/watch/episode-one?token=abc",
             "https://three.example/library/watch/clip",
         ] {
@@ -139,8 +140,8 @@ mod tests {
             "https://example.test/watch?v=123",
             "https://example.test/rewatch/123",
             "https://example.test/?next=/watch/123",
-            "http://example.test/watch/123",
             "https://user@example.test/watch/123",
+            "ftp://example.test/watch/123",
         ] {
             assert!(!is_watch(&Url::parse(address).unwrap()));
         }
