@@ -58,6 +58,23 @@ shows the URL, an advertised-resolution dropdown, and a size-respecting
 cargo run -- 'https://www.youtube.com/watch?v=nXvnof8fTBc'
 ```
 
+HTTPS URLs containing `/watch/` in their path also use the native video box and GStreamer decoder:
+
+```bash
+cargo run -- 'https://example.test/watch/clip'
+```
+
+This route reuses the TRUEOS branch's renderer-independent player resolver.
+It finds the supported embedded player and executes only its packed media
+configuration in an isolated, bounded QuickJS realm. It does not run the full
+website. The resolved MP4 is downloaded before the window opens and cached
+under `~/.cache/solara/media/watch/<url-key>.mp4` (or the configured XDG cache root).
+Incomplete transfers are discarded; individual files are limited to 2 GiB.
+The cache key includes the complete URL, keeping hosts and queries separate.
+The displayed heading uses the watch path. This route offers the source MP4
+rather than YouTube's resolution ladder. The existing decoder produces video
+frames only; audio playback is not implemented.
+
 Run checks:
 
 ```bash

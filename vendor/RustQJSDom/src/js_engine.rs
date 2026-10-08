@@ -467,6 +467,11 @@ impl JsEngine {
         })
     }
 
+    /// Prevent network-page bootstrap code from importing embedded parser modules.
+    pub fn disable_module_loading(&mut self) {
+        unsafe { JS_SetModuleLoaderFunc(self.runtime, None, None, ptr::null_mut()) };
+    }
+
     pub fn bundled_module_specifiers() -> impl Iterator<Item = &'static str> {
         EMBEDDED_MODULES.iter().map(|module| module.specifier)
     }
@@ -666,15 +671,16 @@ impl JsEngine {
                 flags,
             )
         };
-        self.host_state.execution_deadline = None;
         if unsafe { rqjs_is_exception(value) } != 0 {
             let error = self.take_exception();
+            self.host_state.execution_deadline = None;
             if self.host_state.execution_interrupted {
                 Err(JsError::ExecutionTimedOut(timeout.unwrap_or_default()))
             } else {
                 Err(error)
             }
         } else {
+            self.host_state.execution_deadline = None;
             Ok(value)
         }
     }

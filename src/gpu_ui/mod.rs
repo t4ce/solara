@@ -59,6 +59,8 @@ mod text;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod video;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+mod watch_media;
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub(crate) mod youtube;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 mod youtube_media;

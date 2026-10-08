@@ -20,6 +20,7 @@ use crate::gpu_ui::input::{MouseEventKind, MouseInput};
 use crate::gpu_ui::loader::{LoadedPage, load_page};
 use crate::gpu_ui::renderer::{RenderError, Renderer, RendererContext};
 use crate::gpu_ui::video::{self, VideoEvent, VideoPacket};
+use crate::gpu_ui::watch_media;
 use crate::gpu_ui::youtube::{self, YoutubeWatchBootstrap};
 use crate::gpu_ui::youtube_media::{self, YoutubeMediaChoice};
 
@@ -55,6 +56,23 @@ pub fn run(input: Option<String>) -> Result<(), String> {
             None,
             None,
         ),
+        Some(input)
+            if Url::parse(&input).is_ok_and(|url| watch_media::is_watch(&url)) =>
+        {
+            let page_url = Url::parse(&input).map_err(|_| "Invalid watch URL")?;
+            let cached = watch_media::cache_media(&page_url)?;
+            let mut page =
+                load_initial_page(Some(VIDEO_DEMO_HTML_PATH), "Watch video playback", true)?;
+            page.document
+                .set_primary_heading_text(&watch_media::display(&page_url));
+            page.document
+                .configure_select("format-select", vec!["Source MP4".into()], 0);
+            page.title = "Solara — Watch video".into();
+            (vec![page], None, None, Vec::new(), None, Some(cached))
+        }
+        Some(input) if input.starts_with('/') && input.contains("/watch/") => {
+            return Err("Use a full HTTPS watch URL to supply its host".into());
+        }
         Some(input) => {
             let watch_url = youtube_watch_url(input.as_str())?;
             let (youtube_bootstrap, youtube_choices, selected_choice, youtube_media_path) =
@@ -117,7 +135,7 @@ pub fn run(input: Option<String>) -> Result<(), String> {
     let proxy = event_loop.create_proxy();
     let playback = if let Some(path) = youtube_media_path.as_ref() {
         println!(
-            "solara: cached YouTube playback source ready at {}",
+            "solara: cached video playback source ready at {}",
             path.display()
         );
         Some(video::spawn_cached(
@@ -404,7 +422,7 @@ impl GpuUiApp {
             playback.stop();
         }
         println!(
-            "solara: cached YouTube playback source ready at {}",
+            "solara: cached video playback source ready at {}",
             path.display()
         );
         self.playback = Some(video::spawn_cached(
@@ -727,7 +745,7 @@ impl ApplicationHandler<VideoEvent> for GpuUiApp {
                     if !self.video_started {
                         self.video_started = true;
                         eprintln!(
-                            "solara: cached YouTube video frames active ({}x{} RGBA)",
+                            "solara: cached video frames active ({}x{} RGBA)",
                             video::FRAME_WIDTH,
                             video::FRAME_HEIGHT,
                         );
