@@ -11,6 +11,25 @@ in document order after tree construction. External sources and GET fetches
 are polled by the browser; Promise jobs and timer callbacks run in bounded
 slices. See [BIOS bring-up](bios-bringup.md) for the precise API and limits.
 
+The reusable event constructors from the Ubuntu `main` branch now live in
+`browser_events.js`, embedded with `include_str!` into the native PageRuntime.
+`Event`, `CustomEvent`, `UIEvent`, `MouseEvent`, `WheelEvent`, and `EventTarget`
+run against the retained page DOM. The bridge implements ancestor capture,
+target dispatch and bubbling to document/window, capture-sensitive listener
+identity, `once`, `passive`, cancellation, and propagation controls. Legacy
+`document.createEvent` supports those event families through `initEvent` and
+`initCustomEvent`. It limits registrations to 4096 per realm. Native clicks
+continue through the existing node binding; there is no Winit, WGPU, GStreamer,
+media downloader, viewport facade, or desktop frame code in this port.
+
+The desktop YouTube playback ladder is separate evidence: it extracts bootstrap
+JSON and caches video through yt-dlp before GStreamer decoding. Its diagnostic
+QuickJS probe runs page scripts against a partial browser surface; the live
+Rickroll strict probe on 2026-10-08 returned eight scripts, then stopped at the
+missing `Window` constructor. Diagnostic observer/DOM stubs and scout Proxy
+fallbacks are not installed in the native page realm. This port does not claim
+that the full YouTube application works.
+
 DOM methods update the JS tree and append a mutation journal. Once callbacks
 and jobs finish, one JS/Rust handoff transfers the batch. Rust validates its
 node references, applies it through Blitz's DocumentMutator, and the native
@@ -28,7 +47,7 @@ publishing geometry.
 SpecLayout accepts a host-supplied CSS animation time, but native navigation
 still samples it at zero. CSSOM, requestAnimationFrame, Web Animations and a
 continuous animation timeline are not implemented. Parser-blocking, async/defer
-scheduling, modules, full event propagation and browser security policies also
+scheduling, modules, shadow-tree event retargeting and browser security policies also
 remain separate work. The current DOM bridge is not a claim of Vue hydration
 or full browser compatibility.
 

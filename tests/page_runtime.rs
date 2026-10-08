@@ -102,3 +102,79 @@ fn malformed_mirror_and_exception_getters_cannot_escape_the_budget() {
             .is_err()
     );
 }
+
+#[test]
+fn desktop_event_api_runs_in_the_isolated_page_realm() {
+    let (mut runtime, mut layout) =
+        page("<section id='parent'><button id='child'>Click</button></section><p id='result'></p>");
+    runtime.execute(r#"
+      const parent = document.getElementById('parent'), child = document.getElementById('child');
+      const order = [];
+      window.addEventListener('click', e => {
+        if (e.eventPhase !== Event.CAPTURING_PHASE || e.target !== child) throw Error('capture');
+        order.push('window');
+      }, true);
+      parent.addEventListener('click', () => order.push('parent-capture'), {capture:true});
+      child.addEventListener('click', e => {
+        if (!(e instanceof MouseEvent) || !(e instanceof UIEvent) || !(e instanceof Event) || e.view !== window) throw Error('constructors');
+        if (e.composedPath()[0] !== child || e.currentTarget !== child) throw Error('path');
+        order.push('target');
+      });
+      parent.addEventListener('click', () => order.push('parent-bubble'));
+      window.addEventListener('click', () => order.push('window-bubble'));
+      child.click();
+      if (order.join(',') !== 'window,parent-capture,target,parent-bubble,window-bubble') throw Error('event order ' + order);
+      if (globalThis.__solaraLastInputError) throw Error(globalThis.__solaraLastInputError);
+      const wheel = new WheelEvent('wheel', {deltaY:12, ctrlKey:true});
+      if (wheel.deltaY !== 12 || !wheel.getModifierState('Control') || wheel.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) throw Error('wheel');
+      const legacy = document.createEvent('CustomEvent');
+      legacy.initCustomEvent('payload', true, true, {answer:42});
+      child.addEventListener('payload', e => document.getElementById('result').className = 'answer-' + e.detail.answer);
+      child.dispatchEvent(legacy);
+      if (legacy.currentTarget !== null || legacy.eventPhase !== Event.NONE) throw Error('cleanup');
+      if (typeof __pageRecord !== 'undefined' || typeof __rustQjsDomParseJson !== 'undefined') throw Error('host leak');
+    "#, "browser-events.js").unwrap();
+    assert!(runtime.tick(0, &mut layout).unwrap());
+    assert!(
+        layout
+            .document()
+            .query_selector("#result.answer-42")
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn listener_options_cancellation_and_removal_follow_browser_behavior() {
+    let (mut runtime, _) = page("<div id='parent'><button id='child'></button></div>");
+    runtime.execute(r#"
+      const target = new EventTarget(); let calls = 0;
+      const once = () => { calls++; target.dispatchEvent(new Event('once')); };
+      target.addEventListener('once', once, {once:true});
+      target.dispatchEvent(new Event('once'));
+      if (calls !== 1) throw Error('once recursion');
+      target.addEventListener('passive', e => e.preventDefault(), {passive:true});
+      if (!target.dispatchEvent(new Event('passive', {cancelable:true}))) throw Error('passive cancellation');
+      target.addEventListener('cancel', e => e.preventDefault());
+      if (target.dispatchEvent(new Event('cancel', {cancelable:true}))) throw Error('missing cancellation');
+      const removed = () => { throw Error('removed listener ran'); };
+      target.addEventListener('remove', () => target.removeEventListener('remove', removed));
+      target.addEventListener('remove', removed);
+      target.dispatchEvent(new Event('remove'));
+      let dual = 0; const shared = () => dual++;
+      target.addEventListener('dual', shared, true); target.addEventListener('dual', shared, false);
+      target.removeEventListener('dual', shared, true); target.dispatchEvent(new Event('dual'));
+      if (dual !== 1) throw Error('capture identity');
+      let later = false;
+      const child = document.getElementById('child'), parent = document.getElementById('parent');
+      child.addEventListener('stop', e => e.stopImmediatePropagation());
+      child.addEventListener('stop', () => later = true);
+      parent.addEventListener('stop', () => later = true);
+      child.dispatchEvent(new Event('stop', {bubbles:true}));
+      if (later) throw Error('propagation');
+      if (globalThis.__solaraLastInputError) throw Error(globalThis.__solaraLastInputError);
+      target.addEventListener('redispatch', e => target.dispatchEvent(e));
+      target.dispatchEvent(new Event('redispatch'));
+      if (!__solaraLastInputError.includes('Invalid event dispatch')) throw Error('reentrant dispatch');
+    "#, "listener-options.js").unwrap();
+}

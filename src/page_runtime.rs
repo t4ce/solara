@@ -139,6 +139,8 @@ impl PageRuntime {
             SLICE,
         )
         .map_err(|e| e.to_string())?;
+        js.eval_void_with_timeout(include_str!("browser_events.js"), "<browser-events>", SLICE)
+            .map_err(|e| e.to_string())?;
         js.eval_void_with_timeout(include_str!("page_dom.js"), "<page-dom>", SLICE)
             .map_err(|e| e.to_string())?;
         let mut nodes = BTreeMap::new();

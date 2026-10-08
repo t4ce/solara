@@ -11,38 +11,7 @@
   delete globalThis.__pageRecord; delete globalThis.__pageFragment; delete globalThis.__pageFetch;
   const nodes = new Map(), pending = new Map(), timers = new Map();
   let serial = 0, requestId = 0, timerId = 0, clock = 0;
-  class Event {
-    constructor(type, options = {}) { this.type = type; this.bubbles = !!options.bubbles; this.cancelable = !!options.cancelable; this.defaultPrevented = false; }
-    preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
-    stopPropagation() { this.stopped = true; }
-  }
-  class EventTarget {
-    constructor() { this.listeners = new Map(); }
-    addEventListener(type, callback, options = {}) {
-      if (!callback) return;
-      const list = this.listeners.get(type) || [];
-      if (!list.some(x => x.callback === callback)) list.push({ callback, once: !!options.once });
-      this.listeners.set(type, list);
-    }
-    removeEventListener(type, callback) {
-      this.listeners.set(type, (this.listeners.get(type) || []).filter(x => x.callback !== callback));
-    }
-    dispatchEvent(event) {
-      event.target = this;
-      for (let target = this; target; target = target.parentNode || (target === document ? windowEvents : null)) {
-        event.currentTarget = target;
-        const property = target['on' + event.type];
-        if (typeof property === 'function') property.call(target, event);
-        for (const entry of [...(target.listeners.get(event.type) || [])]) {
-          if (entry.once) target.removeEventListener(event.type, entry.callback);
-          if (typeof entry.callback === 'function') entry.callback.call(target, event);
-          else entry.callback.handleEvent(event);
-        }
-        if (!event.bubbles || event.stopped) break;
-      }
-      return !event.defaultPrevented;
-    }
-  }
+  const {Event, EventTarget, MouseEvent} = globalThis;
   class Node extends EventTarget {
     constructor(kind, name, data, id, namespace) {
       super();
@@ -53,6 +22,7 @@
       nodes.set(this._id, this);
       if (!id) record(['create', this._id, kind, name, this._data, this.namespaceURI]);
     }
+    _eventParent() { return this.parentNode || (this.nodeType === 9 ? globalThis : null); }
     get ownerDocument() { return this.nodeType === 9 ? null : document; }
     get tagName() { return this.nodeType === 1 ? this.nodeName.toUpperCase() : undefined; }
     get children() { return this.childNodes.filter(n => n.nodeType === 1); }
@@ -134,7 +104,7 @@
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
     closest(selector) { for (let n = this; n; n = n.parentElement) if (n.matches(selector)) return n; return null; }
     focus() { document.activeElement = this; }
-    click() { this.dispatchEvent(new Event('click', { bubbles: true, cancelable: true })); }
+    click() { this.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: globalThis })); }
   }
   for (const [property, attr] of [['id','id'], ['className','class'], ['type','type'], ['value','value'], ['title','title'], ['tabIndex','tabindex']]) {
     Object.defineProperty(Node.prototype, property, { get() { return this.getAttribute(attr) || ''; }, set(v) { this.setAttribute(attr, v); } });
@@ -159,20 +129,27 @@
     if (n.nodeType === 8) return '<!--' + n._data + '-->';
     return '<' + n.nodeName + [...n._attrs].map(([k,v]) => ' ' + k + '="' + escape(v) + '"').join('') + '>' + n.innerHTML + '</' + n.nodeName + '>';
   }
-  const windowEvents = new EventTarget();
   const document = build(globalThis.__pageTree, 'root'); delete globalThis.__pageTree;
   document.getElementById = id => { const walk = n => { if (n.id === String(id)) return n; for (const c of n.childNodes) { const found = walk(c); if (found) return found; } return null; }; return walk(document); };
   document.createElement = tag => new Node(1, String(tag).toLowerCase());
   document.createElementNS = (ns, tag) => new Node(1, String(tag), '', undefined, ns);
   document.createTextNode = text => new Node(3, '#text', String(text));
   document.createComment = text => new Node(8, '#comment', String(text));
+  document.createEvent = kind => {
+    const type = String(kind).toLowerCase();
+    if (['event', 'events', 'htmlevents'].includes(type)) return new Event('');
+    if (['customevent', 'customevents'].includes(type)) return new globalThis.CustomEvent('');
+    if (['uievent', 'uievents'].includes(type)) return new globalThis.UIEvent('');
+    if (['mouseevent', 'mouseevents'].includes(type)) return new MouseEvent('');
+    throw new TypeError('Unsupported event interface: ' + kind);
+  };
   document.documentElement = document.children[0]; document.head = document.querySelector('head'); document.body = document.querySelector('body');
   document.activeElement = document.body; document.readyState = 'loading';
   globalThis.document = document; globalThis.window = globalThis; globalThis.self = globalThis;
   globalThis.Node = Node; globalThis.Element = Node; globalThis.HTMLElement = Node; globalThis.Event = Event; globalThis.EventTarget = EventTarget;
-  globalThis.addEventListener = windowEvents.addEventListener.bind(windowEvents);
-  globalThis.removeEventListener = windowEvents.removeEventListener.bind(windowEvents);
-  globalThis.dispatchEvent = windowEvents.dispatchEvent.bind(windowEvents);
+  globalThis.addEventListener = EventTarget.prototype.addEventListener.bind(globalThis);
+  globalThis.removeEventListener = EventTarget.prototype.removeEventListener.bind(globalThis);
+  globalThis.dispatchEvent = EventTarget.prototype.dispatchEvent.bind(globalThis);
   globalThis.console = { log() {}, warn() {}, error() {}, info() {} };
   globalThis.fetch = (url, options = {}) => new Promise((resolve, reject) => {
     if (pending.size >= 16) throw Error('Too many pending fetches');
@@ -193,7 +170,7 @@
       // Native transport currently reports successful bodies, not status metadata.
       p.resolve({ok:true, text:() => Promise.resolve(body), json:() => Promise.resolve().then(() => JSON.parse(body))});
     },
-    ready() { document.readyState = 'interactive'; document.dispatchEvent(new Event('DOMContentLoaded', {bubbles:true})); document.readyState = 'complete'; windowEvents.dispatchEvent(new Event('load')); },
+    ready() { document.readyState = 'interactive'; document.dispatchEvent(new Event('DOMContentLoaded', {bubbles:true})); document.readyState = 'complete'; globalThis.dispatchEvent(new Event('load')); },
     tick(now) { clock = now; for (const [id, timer] of [...timers]) if (timer.time <= now) { timers.delete(id); timer.callback(...timer.args); } },
     click(id) { nodes.get(id)?.click(); }
   })});
