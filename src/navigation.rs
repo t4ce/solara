@@ -276,7 +276,7 @@ mod tests {
     }
 }
 
-/// Number keys are available outside address editing. Picking never navigates.
+/// Startup bookmarks addressed by a plain integer submitted with Enter.
 #[derive(Default)]
 pub struct Bookmarks {
     pub entries: Vec<(String, NavigationTarget)>,
@@ -288,7 +288,7 @@ impl Bookmarks {
         let mut list = Self::default();
         if let Some(entries) = config["solara"]["bookmarks"].as_array() {
             // Positions are stable: an invalid entry is an error, not a renumbering.
-            for entry in entries.iter().take(9) {
+            for entry in entries.iter().take(99) {
                 let raw = entry
                     .as_str()
                     .or_else(|| entry["url"].as_str())
@@ -308,6 +308,17 @@ impl Bookmarks {
         }
         Ok(list)
     }
+    /// Integer input resolves only to a configured bookmark, never a numeric URL.
+    /// Missing, zero, or overflowing IDs leave the navigator unchanged.
+    pub fn target(&self, address: &Address) -> Option<NavigationTarget> {
+        let input = address.text.trim();
+        if !input.is_empty() && input.bytes().all(|byte| byte.is_ascii_digit()) {
+            let index = input.parse::<usize>().ok()?.checked_sub(1)?;
+            return self.entries.get(index).map(|(_, target)| target.clone());
+        }
+        address.target().ok()
+    }
+
     pub fn pick(&mut self, index: usize, address: &mut Address) -> bool {
         let Some((_, target)) = self.entries.get(index) else {
             return false;
@@ -337,7 +348,7 @@ mod bookmark_tests {
             serde_json::json!({"label":"BIOS", "url":"http://192.168.178.94:8338/"}); 12
         ]}});
         let mut list = Bookmarks::from_startup(&json.to_string()).unwrap();
-        assert_eq!(list.entries.len(), 9);
+        assert_eq!(list.entries.len(), 12);
         let mut address = Address::default();
         assert!(list.character('9', &mut address));
         assert_eq!(
@@ -353,8 +364,32 @@ mod bookmark_tests {
             address.url().unwrap().as_str(),
             "http://192.168.178.94:8338/"
         );
-        assert!(!list.pick(9, &mut address));
+        assert!(!list.pick(12, &mut address));
     }
+    #[test]
+    fn integer_submission_navigates_only_configured_bookmarks() {
+        let json = serde_json::json!({"solara":{"bookmarks": vec![
+            serde_json::json!({"label":"BIOS", "url":"http://192.168.178.94:8338/"}); 100
+        ]}});
+        let list = Bookmarks::from_startup(&json.to_string()).unwrap();
+        assert_eq!(list.entries.len(), 99);
+        for input in ["1", "10", "99", "01"] {
+            let mut address = Address::default();
+            address.insert(input);
+            assert_eq!(list.target(&address), Some(list.entries[0].1.clone()));
+            assert_eq!(address.text, input);
+        }
+        for input in ["0", "100", "999999999999999999999999999999", ""] {
+            let mut address = Address::default();
+            address.insert(input);
+            assert_eq!(list.target(&address), None);
+            assert_eq!(address.text, input);
+        }
+        let mut address = Address::default();
+        address.insert("www.example.de");
+        assert_eq!(list.target(&address), Some(address.target().unwrap()));
+    }
+
     #[test]
     fn missing_and_invalid_config_are_distinct() {
         assert!(Bookmarks::from_startup("{}").unwrap().entries.is_empty());

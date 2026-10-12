@@ -254,9 +254,9 @@ fn homepage_keeps_the_complete_logo_centered_across_window_sizes() {
     let mut layout = document(include_str!("../docs/home.html"));
     layout.load_image(
         "trueos://solara/assets/logo.jpg".into(),
-        640,
-        360,
-        std::sync::Arc::new(vec![255; 640 * 360 * 4]),
+        3840,
+        2160,
+        std::sync::Arc::new(vec![255; 3840 * 2160 * 4]),
     );
     for (width, height) in [(800, 512), (480, 320), (2480, 1340)] {
         layout

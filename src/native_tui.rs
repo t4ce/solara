@@ -2,8 +2,8 @@
 use crossterm::{
     cursor::{MoveTo, Show},
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, Event, KeyCode,
+        KeyEventKind, KeyModifiers,
     },
     execute, queue,
     style::{Color, ResetColor, SetBackgroundColor},
@@ -34,6 +34,7 @@ pub struct Navigator {
     lease: Option<TerminalLease>,
     parked: Option<TerminalParkingTicket>,
     raw: bool,
+    fresh_input: bool,
 }
 fn io_error(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
@@ -62,6 +63,7 @@ impl Navigator {
             lease: Some(lease),
             parked: None,
             raw: false,
+            fresh_input: true,
         };
         ui.enter()?;
         Ok(ui)
@@ -74,7 +76,7 @@ impl Navigator {
             EnterAlternateScreen,
             ResetColor,
             DisableLineWrap,
-            EnableMouseCapture,
+            DisableMouseCapture,
             EnableBracketedPaste,
             Clear(ClearType::All),
             Show
@@ -109,7 +111,7 @@ impl Navigator {
         self.dirty = true;
     }
     pub fn location(&mut self, target: &NavigationTarget) {
-        self.bookmarks.editing = false;
+        self.fresh_input = true;
         match target {
             NavigationTarget::Web(url) => self.address.set_url(url),
             NavigationTarget::Demo(demo) => self.address.set_demo(*demo),
@@ -117,7 +119,9 @@ impl Navigator {
         self.dirty = true;
     }
     fn field_width(&self) -> usize {
-        self.columns.saturating_sub(19).max(1) as usize
+        self.columns
+            .saturating_sub(if self.address.http { 7 } else { 8 })
+            .max(1) as usize
     }
     fn paint(&mut self) -> io::Result<()> {
         if !self.dirty || self.lease.is_none() {
@@ -134,65 +138,53 @@ impl Navigator {
         let cursor = self.address.text[..self.address.cursor].chars().count();
         let start = cursor.saturating_sub(width.saturating_sub(1));
         let text: String = self.address.text.chars().skip(start).take(width).collect();
-        let selected = self.address.selected;
-        let protocol = if self.address.http { "HTTP " } else { "HTTPS" };
+        let protocol = if self.address.http { "HTTP" } else { "HTTPS" };
+        let prefix = format!("[{protocol}] ");
         let [r, g, b] = CONTROL_BACKGROUND_RGB;
         queue!(out, ResetColor, SetBackgroundColor(Color::Rgb { r, g, b }))?;
-        queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
-        write!(
-            out,
-            "Solara  [{}]",
-            if self.bookmarks.editing {
-                "editing address"
-            } else {
-                "1–9 bookmarks"
-            }
-        )?;
-        queue!(out, MoveTo(0, 1), Clear(ClearType::CurrentLine))?;
-        write!(
-            out,
-            "[{protocol}] URL [{}{:width$}\x1b[27m]",
-            if selected { "\x1b[7m" } else { "" },
-            text
-        )?;
-        queue!(out, MoveTo(0, 2), Clear(ClearType::CurrentLine))?;
-        let status: String = self
-            .status
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(self.columns as usize)
-            .collect();
-        write!(out, "{status}")?;
-        queue!(
-            out,
-            SetBackgroundColor(Color::Reset),
-            MoveTo(0, CONTROL_ROWS),
-            Clear(ClearType::CurrentLine)
-        )?;
-        let help: String =
-            "1-9: pick  Enter: go  Ctrl-L: edit  Tab: picks  F2: HTTP/S  Esc: Shell  Ctrl-Q: quit"
-                .chars()
-                .take(self.columns as usize)
-                .collect();
-        write!(out, "{help}")?;
-        for (index, (label, target)) in self.bookmarks.entries.iter().enumerate() {
-            let row = CONTROL_ROWS + 1 + index as u16;
-            if row >= self.rows {
-                break;
-            }
+        for row in 0..CONTROL_ROWS.min(self.rows) {
             queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
-            let line: String = format!("{}  {label}  {target}", index + 1)
-                .chars()
-                .take(self.columns as usize)
-                .collect();
-            write!(out, "{line}")?;
         }
-        let x = 13 + cursor - start;
-        queue!(
-            out,
-            MoveTo((x as u16).min(self.columns.saturating_sub(1)), 1),
-            Show
-        )?;
+        if self.rows > 1 {
+            queue!(out, MoveTo(0, 1))?;
+            let prefix: String = prefix.chars().take(self.columns as usize).collect();
+            write!(out, "{prefix}")?;
+            if prefix.chars().count() < self.columns as usize {
+                write!(
+                    out,
+                    "{}{text}\x1b[27m",
+                    if self.address.selected { "\x1b[7m" } else { "" }
+                )?;
+            }
+        }
+        queue!(out, SetBackgroundColor(Color::Reset))?;
+        let column_width = (self.columns as usize).saturating_sub(4) / 2;
+        for row in CONTROL_ROWS..self.rows {
+            queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
+            let index = (row - CONTROL_ROWS) as usize;
+            if let Some((label, target)) = self.bookmarks.entries.get(index).filter(|_| index < 99)
+            {
+                let label: String = label.chars().take(column_width).collect();
+                let target: String = target.to_string().chars().take(column_width).collect();
+                let line = format!(
+                    "{:>2} {label:column_width$} {target:column_width$}",
+                    index + 1
+                );
+                write!(
+                    out,
+                    "{}",
+                    line.chars().take(self.columns as usize).collect::<String>()
+                )?;
+            }
+        }
+        if self.rows > 1 {
+            let x = prefix.chars().count() + cursor - start;
+            queue!(
+                out,
+                MoveTo((x as u16).min(self.columns.saturating_sub(1)), 1),
+                Show
+            )?;
+        }
         Ok(())
     }
     pub fn tick(&mut self) -> io::Result<Option<Action>> {
@@ -218,32 +210,12 @@ impl Navigator {
                     self.dirty = true;
                 }
                 Event::Paste(text) => {
-                    self.bookmarks.editing = true;
+                    if self.fresh_input {
+                        self.address.select_all();
+                    }
+                    self.fresh_input = false;
                     self.address.insert(text.trim());
                     self.dirty = true;
-                }
-                Event::Mouse(mouse)
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) && mouse.row == 1 =>
-                {
-                    self.bookmarks.editing = true;
-                    if mouse.column < 7 {
-                        self.address.toggle();
-                    } else {
-                        self.address.cursor = self.address.text.len();
-                        self.address.selected = false;
-                    }
-                    self.dirty = true;
-                }
-                Event::Mouse(mouse)
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                        && mouse.row > CONTROL_ROWS =>
-                {
-                    if self
-                        .bookmarks
-                        .pick((mouse.row - CONTROL_ROWS - 1) as usize, &mut self.address)
-                    {
-                        self.status("Bookmark selected — Enter to go, Ctrl-L to edit");
-                    }
                 }
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -256,7 +228,7 @@ impl Navigator {
                             | KeyCode::Backspace
                             | KeyCode::Delete
                     ) {
-                        self.bookmarks.editing = true;
+                        self.fresh_input = false;
                     }
                     match key.code {
                         KeyCode::Char('q') if ctrl => {
@@ -270,19 +242,22 @@ impl Navigator {
                             }
                             return Ok(None);
                         }
-                        KeyCode::Tab => self.bookmarks.editing = false,
+                        KeyCode::Tab => {
+                            self.fresh_input = true;
+                            self.address.select_all();
+                        }
                         KeyCode::Char('l') if ctrl => {
-                            self.bookmarks.editing = true;
+                            self.fresh_input = false;
                             self.address.select_all();
                         }
                         KeyCode::F(2) => self.address.toggle(),
-                        KeyCode::Enter => match self.address.target() {
-                            Ok(target) => {
+                        KeyCode::Enter => match self.bookmarks.target(&self.address) {
+                            Some(target) => {
                                 self.location(&target);
                                 action = Some(Action::Navigate(target));
                                 break;
                             }
-                            Err(error) => self.status(error),
+                            None => {}
                         },
                         KeyCode::Left => self.address.left(),
                         KeyCode::Right => self.address.right(),
@@ -297,9 +272,11 @@ impl Navigator {
                         KeyCode::Backspace => self.address.backspace(),
                         KeyCode::Delete => self.address.delete(),
                         KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                            if self.bookmarks.character(c, &mut self.address) {
-                                self.status("Bookmark selected — Enter to go, Ctrl-L to edit");
+                            if self.fresh_input {
+                                self.address.select_all();
                             }
+                            self.fresh_input = false;
+                            self.address.insert(&c.to_string());
                         }
                         _ => {}
                     }

@@ -140,7 +140,7 @@ async fn load(url: String) -> Result<LoadedImage, String> {
     {
         include_bytes!("../assets/images/cat.jpg").to_vec()
     } else if url == "trueos://solara/assets/logo.jpg" {
-        include_bytes!("../assets/images/logo.jpg").to_vec()
+        trueos::os_assets::logo_jpeg().map_err(|e| format!("kernel logo read: {e}"))?
     } else if matches!(parsed.scheme(), "http" | "https") {
         fetch_bytes(url.clone()).await?
     } else {
