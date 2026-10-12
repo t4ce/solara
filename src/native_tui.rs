@@ -6,6 +6,7 @@ use crossterm::{
         Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
     },
     execute, queue,
+    style::{Color, ResetColor, SetBackgroundColor},
     terminal::{
         self, Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
         LeaveAlternateScreen,
@@ -16,6 +17,7 @@ use std::{
     io::{self, Write},
     time::Duration,
 };
+use trueos::terminal_style::{CONTROL_BACKGROUND_RGB, CONTROL_ROWS};
 use trueos::vshell::{TerminalLease, TerminalParkingTicket, TerminalReentry};
 
 pub enum Action {
@@ -70,6 +72,7 @@ impl Navigator {
         execute!(
             io::stdout(),
             EnterAlternateScreen,
+            ResetColor,
             DisableLineWrap,
             EnableMouseCapture,
             EnableBracketedPaste,
@@ -94,6 +97,7 @@ impl Navigator {
             DisableBracketedPaste,
             DisableMouseCapture,
             EnableLineWrap,
+            ResetColor,
             LeaveAlternateScreen
         );
         let raw = terminal::disable_raw_mode();
@@ -119,13 +123,21 @@ impl Navigator {
         if !self.dirty || self.lease.is_none() {
             return Ok(());
         }
+        let mut out = io::BufWriter::new(io::stdout());
+        self.render(&mut out)?;
+        out.flush()?;
+        self.dirty = false;
+        Ok(())
+    }
+    fn render(&self, out: &mut impl Write) -> io::Result<()> {
         let width = self.field_width();
         let cursor = self.address.text[..self.address.cursor].chars().count();
         let start = cursor.saturating_sub(width.saturating_sub(1));
         let text: String = self.address.text.chars().skip(start).take(width).collect();
         let selected = self.address.selected;
         let protocol = if self.address.http { "HTTP " } else { "HTTPS" };
-        let mut out = io::BufWriter::new(io::stdout());
+        let [r, g, b] = CONTROL_BACKGROUND_RGB;
+        queue!(out, ResetColor, SetBackgroundColor(Color::Rgb { r, g, b }))?;
         queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
         write!(
             out,
@@ -139,7 +151,7 @@ impl Navigator {
         queue!(out, MoveTo(0, 1), Clear(ClearType::CurrentLine))?;
         write!(
             out,
-            "[{protocol}] URL [{}{:width$}\x1b[0m]",
+            "[{protocol}] URL [{}{:width$}\x1b[27m]",
             if selected { "\x1b[7m" } else { "" },
             text
         )?;
@@ -151,7 +163,12 @@ impl Navigator {
             .take(self.columns as usize)
             .collect();
         write!(out, "{status}")?;
-        queue!(out, MoveTo(0, 3), Clear(ClearType::CurrentLine))?;
+        queue!(
+            out,
+            SetBackgroundColor(Color::Reset),
+            MoveTo(0, CONTROL_ROWS),
+            Clear(ClearType::CurrentLine)
+        )?;
         let help: String =
             "1-9: pick  Enter: go  Ctrl-L: edit  Tab: picks  F2: HTTP/S  Esc: Shell  Ctrl-Q: quit"
                 .chars()
@@ -159,7 +176,7 @@ impl Navigator {
                 .collect();
         write!(out, "{help}")?;
         for (index, (label, target)) in self.bookmarks.entries.iter().enumerate() {
-            let row = 4 + index as u16;
+            let row = CONTROL_ROWS + 1 + index as u16;
             if row >= self.rows {
                 break;
             }
@@ -176,8 +193,6 @@ impl Navigator {
             MoveTo((x as u16).min(self.columns.saturating_sub(1)), 1),
             Show
         )?;
-        out.flush()?;
-        self.dirty = false;
         Ok(())
     }
     pub fn tick(&mut self) -> io::Result<Option<Action>> {
@@ -220,11 +235,12 @@ impl Navigator {
                     self.dirty = true;
                 }
                 Event::Mouse(mouse)
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) && mouse.row >= 4 =>
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                        && mouse.row > CONTROL_ROWS =>
                 {
                     if self
                         .bookmarks
-                        .pick((mouse.row - 4) as usize, &mut self.address)
+                        .pick((mouse.row - CONTROL_ROWS - 1) as usize, &mut self.address)
                     {
                         self.status("Bookmark selected — Enter to go, Ctrl-L to edit");
                     }

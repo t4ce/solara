@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll, Waker},
 };
-use trueos::ui4_scene::{Damage, Error as UiError, Frame, MenuEntry, ResizeEvent};
+use trueos::ui4_scene::{BackgroundLayer, Damage, Error as UiError, Frame, MenuEntry, ResizeEvent};
 use trueos::vgpu::{self, Buffer, Device, Queue, QueueClass, RenderPipeline, ShaderModule};
 
 #[cfg(feature = "native-demos")]
@@ -41,9 +41,11 @@ struct MenuState {
     zoom_delta: i32,
     collapse: bool,
     open_image: bool,
+    pause_video: bool,
+    close_video: bool,
 }
-fn menu_entries(image: bool) -> [MenuEntry<'static, MenuState>; 4] {
-    [
+fn menu_entries(image: bool, paused: Option<bool>) -> Vec<MenuEntry<'static, MenuState>> {
+    let mut entries: Vec<MenuEntry<'static, MenuState>> = vec![
         MenuEntry::new("+", |s| s.zoom_delta += 10),
         MenuEntry::new("-", |s| s.zoom_delta -= 10),
         MenuEntry::new("collapse", |s| s.collapse = true),
@@ -52,11 +54,23 @@ fn menu_entries(image: bool) -> [MenuEntry<'static, MenuState>; 4] {
         } else {
             MenuEntry::disabled("OPEN IMG")
         },
-    ]
+    ];
+    if let Some(paused) = paused {
+        entries.push(MenuEntry::new(
+            if paused { "Play" } else { "Pause" },
+            |s: &mut MenuState| s.pause_video = true,
+        ));
+        entries.push(MenuEntry::new("Close video", |s: &mut MenuState| {
+            s.close_video = true
+        }));
+    }
+    entries
 }
+
 struct ImageMenu {
     serial: u64,
     image: Option<Arc<Vec<u8>>>,
+    paused: Option<bool>,
 }
 
 type ImageOpening = Pin<Box<dyn Future<Output = Result<(), String>>>>;
@@ -139,6 +153,7 @@ struct Window {
     image_vertices: Buffer,
     image_indices: Buffer,
     frame: Frame,
+    page_layer: Option<BackgroundLayer>,
     layout: SpecLayout,
     painter: Painter,
     mesh: PageMesh,
@@ -256,6 +271,7 @@ impl Window {
             image_vertices,
             image_indices,
             frame,
+            page_layer: None,
             layout,
             painter,
             mesh,
@@ -293,6 +309,12 @@ impl Window {
         self.video = None;
         self.video_source = None;
         let (x, y) = self.frame.position()?;
+        if self.page_layer.is_some() {
+            let mut frame = Frame::open_streaming(x, y, self.frame.width(), self.frame.height())?;
+            frame.register_dynamic_context_menu()?;
+            self.page_layer = None;
+            self.frame = frame;
+        }
         let expanded = Expanded {
             x,
             y,
@@ -416,13 +438,15 @@ impl Window {
                 } else {
                     None
                 };
+                let paused = self.video.as_ref().map(|video| video.paused);
                 if self
                     .frame
-                    .resolve_context_menu(event.serial, &menu_entries(image.is_some()))?
+                    .resolve_context_menu(event.serial, &menu_entries(image.is_some(), paused))?
                 {
                     self.image_menu = Some(ImageMenu {
                         serial: event.serial,
                         image,
+                        paused,
                     });
                 }
             } else if self
@@ -431,7 +455,10 @@ impl Window {
                 .is_some_and(|menu| menu.serial == event.serial)
             {
                 let menu = self.image_menu.take().expect("matching menu serial");
-                event.dispatch(&menu_entries(menu.image.is_some()), &mut self.menu);
+                event.dispatch(
+                    &menu_entries(menu.image.is_some(), menu.paused),
+                    &mut self.menu,
+                );
                 if core::mem::take(&mut self.menu.open_image) {
                     if let Some(image) = menu.image {
                         self.opening_image = Some(Box::pin(open_loaded_image(image)));
@@ -445,6 +472,15 @@ impl Window {
     fn tick(&mut self) -> Result<(), Error> {
         let started = trueos::clock::Instant::now();
         self.tick_context_menu()?;
+        if core::mem::take(&mut self.menu.pause_video)
+            && let Some(video) = &mut self.video
+        {
+            video.toggle_pause()?;
+        }
+        if core::mem::take(&mut self.menu.close_video) {
+            self.video = None;
+            self.dirty = true;
+        }
         let zoom_delta = core::mem::take(&mut self.menu.zoom_delta);
         if zoom_delta != 0 {
             self.zoom_percent = (self.zoom_percent + zoom_delta).clamp(10, 500);
@@ -640,8 +676,14 @@ impl Window {
         }
         let upload_us = upload_started.elapsed().as_micros();
         let render_started = trueos::clock::Instant::now();
-        self.frame.begin_gpu_frame()?;
-        let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
+        let page_target = if let Some(layer) = &mut self.page_layer {
+            layer.begin_gpu_frame()?;
+            layer.render_target()
+        } else {
+            self.frame.begin_gpu_frame()?;
+            self.frame.window_id()
+        };
+        let surface = self.device.acquire_ui4_surface(page_target)?;
         let mut batch = vgpu::IndexedDrawBatchV2 {
             clear_rgba8_srgb: self.mesh.canvas_color,
             ..Default::default()
@@ -669,8 +711,12 @@ impl Window {
         self.device.wait(self.queue, point.value)?;
         let image_draws = self.draw_images()?;
         let render_us = render_started.elapsed().as_micros();
-        self.frame
-            .publish(Damage::full(self.frame.width(), self.frame.height()))?;
+        let damage = Damage::full(self.frame.width(), self.frame.height());
+        if let Some(layer) = &mut self.page_layer {
+            layer.publish(damage)?;
+        } else {
+            self.frame.publish(damage)?;
+        }
         crate::parser_probe::report_info(format_args!(
             "solara: native-frame window={} boxes={} glyphs={} cached_glyphs={} vertices={} triangles={} color_runs={} scroll_y={} timeline={} image_draws={} upload_us={} render_us={} frame_us={}",
             self.frame.window_id(),
@@ -691,16 +737,35 @@ impl Window {
         Ok(())
     }
     fn tick_video(&mut self) -> Result<(), Error> {
+        let layered = !self.mesh.videos.is_empty();
+        if layered != self.page_layer.is_some() {
+            let (x, y) = self.frame.position()?;
+            let (w, h) = (self.frame.width(), self.frame.height());
+            let mut frame = if layered {
+                Frame::open_layered(x, y, w, h, 30)?
+            } else {
+                Frame::open_streaming(x, y, w, h)?
+            };
+            frame.register_dynamic_context_menu()?;
+            let page_layer = if layered {
+                Some(frame.background()?)
+            } else {
+                None
+            };
+            self.page_layer = page_layer;
+            self.frame = frame;
+            self.dirty = true;
+            self.uploaded = false;
+        }
         let Some(quad) = self.mesh.videos.first().cloned() else {
             self.video = None;
             self.video_source = None;
             return Ok(());
         };
-        let (x, y) = self.frame.position()?;
         let zoom = self.zoom();
         let rect = [
-            x + (quad.corners[0][0] * zoom) as i32,
-            y + ((quad.corners[0][1] - self.scroll_y) * zoom) as i32,
+            (quad.corners[0][0] * zoom) as i32,
+            ((quad.corners[0][1] - self.scroll_y) * zoom) as i32,
             ((quad.corners[1][0] - quad.corners[0][0]) * zoom).max(1.) as i32,
             ((quad.corners[3][1] - quad.corners[0][1]) * zoom).max(1.) as i32,
         ];
@@ -714,15 +779,19 @@ impl Window {
             }
         }
         if let Some(video) = &mut self.video {
-            if let Err(code) = video.tick(rect) {
+            if let Err(code) = video.tick(&mut self.frame, rect) {
                 if code != vgpu::ERR_BUSY {
                     self.video = None;
                     self.script_error = Some(format!("Video playback failed: {code}"));
                 }
             }
         }
-        if self.video.as_ref().is_some_and(|video| video.closed) {
-            self.video = None;
+        // A page publication (including a paired resize) needs a foreground
+        // even while the decoder is pending or a video was closed.
+        if self.dirty && self.video.as_ref().is_none_or(|video| !video.has_frame()) {
+            self.frame.begin(0)?;
+            self.frame
+                .publish(Damage::full(self.frame.width(), self.frame.height()))?;
         }
         Ok(())
     }
@@ -752,7 +821,11 @@ impl Window {
             if self.device.write_buffer(self.image_vertices, 0, &bytes)? != bytes.len() {
                 return Err(Error::Other("short image quad upload".into()));
             }
-            let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
+            let page_target = self
+                .page_layer
+                .as_ref()
+                .map_or(self.frame.window_id(), |layer| layer.render_target());
+            let surface = self.device.acquire_ui4_surface(page_target)?;
             let point = self.device.submit_ui4_indexed(
                 self.queue,
                 surface,
@@ -1126,7 +1199,25 @@ pub(crate) fn run_browser() -> Result<(), String> {
                         url.clone(),
                         Box::pin(async move {
                             let bytes = crate::native_images::fetch_bytes(url.to_string()).await?;
-                            if solara::watch_media::is_watch(&url) {
+                            if solara::video_page::is_video_url(&url) {
+                                let html = String::from_utf8(bytes)
+                                    .map_err(|_| "Video page is not UTF-8")?;
+                                let media = match solara::video_page::page_media(&html, &url)? {
+                                    solara::video_page::PageMedia::Source(source) => source,
+                                    solara::video_page::PageMedia::Player(player) => {
+                                        let html = String::from_utf8(
+                                            crate::native_images::fetch_bytes_limited(
+                                                player.to_string(),
+                                                1024 * 1024,
+                                            )
+                                            .await?,
+                                        )
+                                        .map_err(|_| "Player is not UTF-8")?;
+                                        solara::video_page::player_source(&html, &player)?
+                                    }
+                                };
+                                Ok(solara::video_page::video_document(&url, &media).into_bytes())
+                            } else if solara::watch_media::is_watch(&url) {
                                 let html = String::from_utf8(bytes)
                                     .map_err(|_| "Watch page is not UTF-8")?;
                                 let player = solara::watch_media::player_frame(&html, &url)?;

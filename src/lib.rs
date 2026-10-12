@@ -19,3 +19,6 @@ pub mod image_upload;
 
 /// Bounded, renderer-free watch page media resolver.
 pub mod watch_media;
+
+/// Bounded main-video resolver for generic /video/ pages.
+pub mod video_page;

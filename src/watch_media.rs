@@ -16,10 +16,10 @@ pub fn shorthand(text: &str, base: &Url) -> Option<Url> {
     text.starts_with('/')
         .then(|| base.join(text).ok())
         .flatten()
-        .filter(is_watch)
+        .filter(|url| is_watch(url) || crate::video_page::is_video_url(url))
 }
 pub fn display(url: &Url) -> String {
-    if is_watch(url) {
+    if is_watch(url) || crate::video_page::is_video_url(url) {
         url[url::Position::BeforePath..].to_owned()
     } else {
         url.to_string()

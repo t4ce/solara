@@ -298,3 +298,18 @@ fn generic_fallbacks_are_proportional_and_woff2_completion_reflows_text() {
         "resize reuses the decoded font"
     );
 }
+
+#[test]
+fn projected_hls_video_retains_its_source_and_measured_quad() {
+    let page = url::Url::parse("https://example.test/video/clip").unwrap();
+    let source = url::Url::parse("https://cdn.example.test/main.m3u8?token=a&expires=123").unwrap();
+    let html = solara::video_page::video_document(&page, &source);
+    let artifact = DomEngine::new().unwrap().parse(&html, page.as_str()).unwrap();
+    let mut layout = SpecLayout::from_artifact(&artifact, config(960)).unwrap();
+    assert!(layout.resolve(0.0).unwrap());
+    let mesh = solara::native_paint::Painter::default().paint(layout.document()).unwrap();
+    assert_eq!(mesh.videos.len(), 1);
+    assert_eq!(mesh.videos[0].url, source.as_str());
+    assert!(mesh.videos[0].corners[1][0] > mesh.videos[0].corners[0][0]);
+    assert!(mesh.videos[0].corners[3][1] > mesh.videos[0].corners[0][1]);
+}

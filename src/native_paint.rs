@@ -327,7 +327,7 @@ impl Painter {
                     });
                 if let Some(url) = src.and_then(|s| doc.base_url().join(s).ok())
                     && url.scheme() == "https"
-                    && url.path().ends_with(".mp4")
+                    && (url.path().ends_with(".mp4") || url.path().ends_with(".m3u8"))
                 {
                     let x = layout.border.left + layout.padding.left;
                     let y = layout.border.top + layout.padding.top;

@@ -295,14 +295,14 @@ a real `<video controls autoplay playsinline>` and `<source type="video/mp4">`.
 The original page and advertisement layout are omitted.
 
 The native painter retains the video node's identity, source URL and measured
-content rectangle. Solara owns an independent UI4 video surface anchored to
-that rectangle, following browser movement, zoom and reflow. Closing or
-replacing the page drops its surface, texture lease and stream. Collapsing the
-browser stops video; expanding creates a fresh stream. The video surface's
-native context menu offers Pause/Play and Close video; seeking, audio, and full
-HTML media-control semantics are not implemented. It is a separate UI4 window,
-not a child compositor layer, so stacking/focus and clipping need hardware
-verification. Only the first visible-layout video is wired in this first step.
+content rectangle. Video pages use one UI4 window with paired surfaces: the
+page paints the background, while the streaming foreground stays transparent
+outside the letterboxed video quad. UI4 keeps the two surfaces together through
+focus, movement and resize; zoom and reflow update the quad inside that window.
+Closing or replacing the page drops its texture lease and stream. Collapsing the
+browser stops video; expanding creates a fresh stream. The native context menu
+offers Pause/Play and Close video; seeking, audio, and full HTML media-control
+semantics are not implemented. Only the first visible-layout video is wired.
 
 The additive `vmedia::Video::open_url` protocol command (6) feeds the existing
 bounded online MP4 download/demux/decode path into the owner-scoped texture ring
@@ -323,3 +323,19 @@ updated kernel. For a host-only resolver probe against locally fetched HTML:
 cargo run --locked --no-default-features --example watch_resolve -- \
   https://example.test/watch/clip watch.html player.html
 ```
+
+Generic `/video/` pages use the same minimal DOM and native UI4 video surface.
+The renderer-free resolver accepts an HTML5 source, a same-page JSON-LD
+VideoObject, or one unambiguous player iframe. Packed JW Player setup is
+unpacked in bounded QJS with `eval` intercepted, and only its leading setup
+call is evaluated; subsequent page and ad code do not run.
+
+HTTPS `.m3u8` sources use the kernel's bounded HLS VOD reader. It follows a
+master variant and fetches MPEG-TS segments incrementally, demuxes the AVC
+track without transcoding, and retains a GOP of lookahead to preserve PES
+picture tails and B-frame timestamps across segments. Pictures use the same
+VDBOX decoder, texture leases, and retained UI4 submission as MP4. Encryption,
+fMP4 HLS, discontinuities, live playlists, and multiple AVC tracks are rejected
+explicitly. Segment fetches are bounded at 16 MiB and currently occur between
+decode batches; slow connections can pause at those boundaries. Audio and
+seeking remain outside this native video proof.

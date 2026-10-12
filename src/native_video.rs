@@ -1,7 +1,8 @@
-//! One DOM video owns a UI4 texture surface. The kernel performs URL fetch,
+//! One DOM video shades the foreground of its page's paired UI4 surface.
+//! The kernel performs URL fetch,
 //! demux, hardware decode and RGBA conversion; only leased texture IDs reach us.
 use trueos::{
-    ui4_scene::{Damage, Frame, MenuEntry},
+    ui4_scene::{Damage, Frame},
     vgpu::*,
     vmedia::{Video, VideoFrame, VideoPoll},
 };
@@ -9,7 +10,6 @@ use trueos::{
 pub(crate) struct VideoSurface {
     stream: Video,
     current: Option<VideoFrame>,
-    frame: Frame,
     device: Device,
     queue: Queue,
     mesh: RetainedMesh,
@@ -17,9 +17,9 @@ pub(crate) struct VideoSurface {
     indices: Buffer,
     rect: [i32; 4],
     first_frame: bool,
-    pub(crate) closed: bool,
-    paused: bool,
+    pub(crate) paused: bool,
     dirty: bool,
+    viewport: [u32; 2],
 }
 impl VideoSurface {
     pub(crate) fn open(
@@ -81,19 +81,9 @@ impl VideoSurface {
                 return Err(e);
             }
         };
-        let frame = match Frame::open_streaming(rect[0], rect[1], rect[2] as u32, rect[3] as u32) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = device.destroy_retained_mesh(mesh);
-                let _ = device.destroy_buffer(indices);
-                let _ = device.destroy_buffer(vertices);
-                return Err(ERR_IO);
-            }
-        };
-        let mut surface = Self {
+        Ok(Self {
             stream,
             current: None,
-            frame,
             device,
             queue,
             mesh,
@@ -101,60 +91,23 @@ impl VideoSurface {
             indices,
             rect,
             first_frame: true,
-            closed: false,
             paused: false,
             dirty: true,
-        };
-        surface
-            .frame
-            .register_dynamic_context_menu()
-            .map_err(|_| ERR_IO)?;
-        Ok(surface)
+            viewport: [0, 0],
+        })
     }
-    pub(crate) fn tick(&mut self, rect: [i32; 4]) -> Result<(), i32> {
-        while let Some(event) = self
-            .frame
-            .take_dynamic_context_menu_event()
-            .map_err(|_| ERR_IO)?
-        {
-            let entries = [
-                MenuEntry::new(
-                    if self.paused { "Play" } else { "Pause" },
-                    |s: &mut [bool; 2]| s[0] = true,
-                ),
-                MenuEntry::new("Close video", |s: &mut [bool; 2]| s[1] = true),
-            ];
-            if event.closed.is_none() {
-                self.frame
-                    .resolve_context_menu(event.serial, &entries)
-                    .map_err(|_| ERR_IO)?;
-            } else {
-                let mut action = [false; 2];
-                event.dispatch(&entries, &mut action);
-                if action[0] {
-                    self.paused = !self.paused;
-                    self.stream.set_paused(self.paused)?;
-                }
-                if action[1] {
-                    self.closed = true;
-                    return Ok(());
-                }
-            }
-        }
-        let moved = self.rect != rect;
-        if moved {
-            if self.rect[..2] != rect[..2] {
-                self.frame
-                    .set_position(rect[0], rect[1])
-                    .map_err(|_| ERR_IO)?;
-            }
-            if self.rect[2..] != rect[2..] {
-                self.frame
-                    .resize(rect[2] as u32, rect[3] as u32)
-                    .map_err(|_| ERR_IO)?;
-            }
-            self.rect = rect;
-        }
+    pub(crate) fn toggle_pause(&mut self) -> Result<(), i32> {
+        self.paused = !self.paused;
+        self.stream.set_paused(self.paused)
+    }
+    pub(crate) fn has_frame(&self) -> bool {
+        self.current.is_some()
+    }
+    pub(crate) fn tick(&mut self, target: &mut Frame, rect: [i32; 4]) -> Result<(), i32> {
+        let viewport = [target.width(), target.height()];
+        let moved = self.rect != rect || self.viewport != viewport;
+        self.rect = rect;
+        self.viewport = viewport;
         let changed = match self.stream.poll()? {
             VideoPoll::Frame(frame) => {
                 self.current = Some(frame);
@@ -185,12 +138,17 @@ impl VideoSurface {
             forward_far: [0., 0., 1., 100.],
             ..Default::default()
         };
-        submit.frame.clear_rgba8_srgb = u32::from_le_bytes([0, 0, 0, 255]);
+        submit.frame.clear_rgba8_srgb = 0;
         submit.frame.seed_count = 1;
         submit.frame.seeds[0] = RetainedTransformSeed {
+            translation: [
+                (2 * rect[0] + rect[2]) as f32 / viewport[0] as f32 - 1.,
+                1. - (2 * rect[1] + rect[3]) as f32 / viewport[1] as f32,
+                0.,
+            ],
             scale: [
-                width as f32 * scale / rect[2] as f32,
-                height as f32 * scale / rect[3] as f32,
+                width as f32 * scale / viewport[0] as f32,
+                height as f32 * scale / viewport[1] as f32,
                 1.,
             ],
             rotation: [0., 0., 0., 1.],
@@ -202,25 +160,25 @@ impl VideoSurface {
             index_count: 6,
         };
         submit.textures[0] = frame.texture_id().raw();
-        self.frame.begin_gpu_frame().map_err(|e| match e {
+        target.begin_gpu_frame().map_err(|e| match e {
             trueos::ui4_scene::Error::Busy => ERR_BUSY,
             _ => ERR_IO,
         })?;
-        let surface = self.device.acquire_ui4_surface(self.frame.window_id())?;
+        let surface = self.device.acquire_ui4_surface(target.window_id())?;
         let point = self
             .device
             .submit_retained_textured_frame_v1(self.queue, surface, self.mesh, submit)?;
         // Retire the GPU read before polling/replacing the lease on next tick.
         self.device.wait(self.queue, point.value)?;
-        self.frame
-            .publish(Damage::full(rect[2] as u32, rect[3] as u32))
+        target
+            .publish(Damage::full(viewport[0], viewport[1]))
             .map_err(|_| ERR_IO)?;
         self.dirty = false;
         if self.first_frame {
             self.first_frame = false;
             crate::parser_probe::report_info(format_args!(
                 "solara: DOM video texture active window={} extent={}x{}",
-                self.frame.window_id(),
+                target.window_id(),
                 width,
                 height
             ));
