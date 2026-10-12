@@ -258,7 +258,7 @@ fn homepage_keeps_the_complete_logo_centered_across_window_sizes() {
         2160,
         std::sync::Arc::new(vec![255; 3840 * 2160 * 4]),
     );
-    for (width, height) in [(800, 512), (480, 320), (2480, 1340)] {
+    for (width, height) in [(800, 512), (480, 320), (2480, 1340), (1920, 1080), (3840, 2160), (600, 1000)] {
         layout
             .set_viewport(Viewport {
                 window_size: (width, height),
@@ -281,6 +281,12 @@ fn homepage_keeps_the_complete_logo_centered_across_window_sizes() {
         assert!(left >= 0.0 && top >= 0.0);
         assert!(right <= width as f32 && bottom <= height as f32);
         assert!(((right - left) / (bottom - top) - 640.0 / 360.0).abs() < 0.001);
+        assert!(
+            ((right - left) - width as f32).abs() <= 1.0
+                || ((bottom - top) - height as f32).abs() <= 1.0,
+            "logo must fill one viewport dimension: {width}x{height} {:?}",
+            image.corners
+        );
     }
 }
 

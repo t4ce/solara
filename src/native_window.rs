@@ -1146,10 +1146,10 @@ pub(crate) fn run_browser() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     let (output_w, output_h) =
         trueos::ui4_scene::output_dimensions().map_err(|e| format!("output: {e:?}"))?;
-    let (width, height) = (
-        output_w.saturating_sub(80).clamp(320, 800),
-        output_h.saturating_sub(100).clamp(240, 512),
-    );
+    // Fit a 16:9 window within half of each output dimension.
+    // A 2560×1440 monitor opens at 1280×720.
+    let units = (output_w / 32).min(output_h / 18).max(1);
+    let (width, height) = (units * 16, units * 9);
     let (layout, resources) = page_layout(
         &mut engine,
         "trueos://solara/home",
