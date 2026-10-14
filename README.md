@@ -75,6 +75,24 @@ The displayed heading uses the watch path. This route offers the source MP4
 rather than YouTube's resolution ladder. The existing decoder produces video
 frames only; audio playback is not implemented.
 
+HTTP or HTTPS pages whose path contains `/video/` use the online video route.
+The resolver selects a single HTML5 video, the page's declared `VideoObject`
+source/player, or an unambiguous player iframe. Packed JW Player configuration
+is unpacked in bounded QuickJS (16 MiB heap, 512 KiB stack, 250 ms per evaluation).
+Only its leading `setup` call runs against a source-capture stub; subsequent
+event handlers, advertising, and the original website layout are omitted.
+No website or CDN host is hardcoded for this route.
+
+The resulting document contains the short page path and one real video/source
+element. GStreamer opens its HTTPS MP4 or HLS URL directly and delivers RGBA
+frames to the existing WGPU video box. Online playback requires GStreamer's
+`uridecodebin3` and HLS plugins. HLS playlists and segments are fetched
+incrementally rather than caching the complete recording before playback.
+Audio and seeking are not wired. Use `cargo run -- 'https://example.test/video/clip'`
+with an actual page URL. This is the Ubuntu proof; The TRUEOS branch also resolves generic `/video/` pages and feeds unencrypted
+AVC MPEG-TS HLS VOD into its native texture decoder; this Ubuntu presenter
+continues to use GStreamer.
+
 Run checks:
 
 ```bash

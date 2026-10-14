@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,14 +41,35 @@ pub fn spawn_cached(
     packet_tx: SyncSender<VideoPacket>,
     proxy: EventLoopProxy<VideoEvent>,
 ) -> PlaybackHandle {
+    spawn(DecodeInput::Cached(path), request_id, packet_tx, proxy)
+}
+
+pub fn spawn_online(
+    url: url::Url,
+    request_id: u64,
+    packet_tx: SyncSender<VideoPacket>,
+    proxy: EventLoopProxy<VideoEvent>,
+) -> PlaybackHandle {
+    spawn(DecodeInput::Online(url), request_id, packet_tx, proxy)
+}
+
+enum DecodeInput {
+    Cached(PathBuf),
+    Online(url::Url),
+}
+
+fn spawn(
+    input: DecodeInput,
+    request_id: u64,
+    packet_tx: SyncSender<VideoPacket>,
+    proxy: EventLoopProxy<VideoEvent>,
+) -> PlaybackHandle {
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = Arc::clone(&cancelled);
     thread::Builder::new()
         .name("solara-video-decode".to_string())
         .spawn(move || {
-            if let Err(error) =
-                decode_file(&path, request_id, &thread_cancelled, &packet_tx, &proxy)
-            {
+            if let Err(error) = decode(&input, request_id, &thread_cancelled, &packet_tx, &proxy) {
                 match packet_tx.try_send(VideoPacket::Failed { request_id, error }) {
                     Ok(()) => {
                         let _ = proxy.send_event(VideoEvent::PacketReady);
@@ -61,8 +82,8 @@ pub fn spawn_cached(
     PlaybackHandle { cancelled }
 }
 
-fn decode_file(
-    path: &Path,
+fn decode(
+    input: &DecodeInput,
     request_id: u64,
     cancelled: &AtomicBool,
     packet_tx: &SyncSender<VideoPacket>,
@@ -71,14 +92,27 @@ fn decode_file(
     let caps = format!(
         "video/x-raw,format=RGBA,width={FRAME_WIDTH},height={FRAME_HEIGHT},pixel-aspect-ratio=1/1"
     );
-    let location = format!("location={}", path.display());
-    let mut child = Command::new("gst-launch-1.0")
+    let mut command = Command::new("gst-launch-1.0");
+    command.arg("-q");
+    match input {
+        DecodeInput::Cached(path) => {
+            command.args([
+                "filesrc",
+                &format!("location={}", path.display()),
+                "!",
+                "decodebin",
+            ]);
+        }
+        DecodeInput::Online(url) => {
+            // GStreamer fetches HLS manifests/segments incrementally. Signed
+            // source URLs stay out of diagnostics and browser chrome.
+            // decodebin3/adaptivedemux2 handles the HLS stream transitions;
+            // the older uridecodebin path can fail after its first frames.
+            command.args(["uridecodebin3", &format!("uri={url}"), "!", "queue"]);
+        }
+    }
+    let mut child = command
         .args([
-            "-q",
-            "filesrc",
-            location.as_str(),
-            "!",
-            "decodebin",
             "!",
             "videoconvert",
             "!",
@@ -158,7 +192,11 @@ fn decode_file(
     if !status.success() {
         return Err(format!(
             "GStreamer exited with {status}: {}",
-            concise_error(&decoder_error)
+            match input {
+                DecodeInput::Online(url) =>
+                    concise_error(&decoder_error).replace(url.as_str(), "<media source>"),
+                DecodeInput::Cached(_) => concise_error(&decoder_error).to_owned(),
+            }
         ));
     }
     Ok(())

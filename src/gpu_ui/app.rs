@@ -20,6 +20,7 @@ use crate::gpu_ui::input::{MouseEventKind, MouseInput};
 use crate::gpu_ui::loader::{LoadedPage, load_page};
 use crate::gpu_ui::renderer::{RenderError, Renderer, RendererContext};
 use crate::gpu_ui::video::{self, VideoEvent, VideoPacket};
+use crate::gpu_ui::video_page;
 use crate::gpu_ui::watch_media;
 use crate::gpu_ui::youtube::{self, YoutubeWatchBootstrap};
 use crate::gpu_ui::youtube_media::{self, YoutubeMediaChoice};
@@ -40,6 +41,7 @@ struct YoutubeStartup {
 }
 
 pub fn run(input: Option<String>) -> Result<(), String> {
+    let mut online_source = None;
     let (
         mut initial_pages,
         watch_url,
@@ -56,9 +58,37 @@ pub fn run(input: Option<String>) -> Result<(), String> {
             None,
             None,
         ),
-        Some(input)
-            if Url::parse(&input).is_ok_and(|url| watch_media::is_watch(&url)) =>
-        {
+        Some(input) if Url::parse(&input).is_ok_and(|url| video_page::is_video_url(&url)) => {
+            let page_url = Url::parse(&input).map_err(|_| "Invalid video page URL")?;
+            let source = video_page::resolve_online(&page_url)?;
+            let mut engine = rust_qjs_dom::DomEngine::new().map_err(|e| e.to_string())?;
+            let artifact = engine
+                .parse(
+                    &video_page::video_document(&page_url, &source),
+                    page_url.as_str(),
+                )
+                .map_err(|e| e.to_string())?;
+            let document = Document::from_dom(artifact, engine, WINDOW_WIDTH as f32)?;
+            let page = InitialPage {
+                label: "Online video playback",
+                url: page_url,
+                title: "Solara — Online video".into(),
+                favicon_url: None,
+                document,
+                plays_cached_video: true,
+            };
+            println!(
+                "solara: main video source resolved ({})",
+                if source.path().ends_with(".m3u8") {
+                    "HLS"
+                } else {
+                    "MP4"
+                }
+            );
+            online_source = Some(source);
+            (vec![page], None, None, Vec::new(), None, None)
+        }
+        Some(input) if Url::parse(&input).is_ok_and(|url| watch_media::is_watch(&url)) => {
             let page_url = Url::parse(&input).map_err(|_| "Invalid watch URL")?;
             let cached = watch_media::cache_media(&page_url)?;
             let mut page =
@@ -70,7 +100,10 @@ pub fn run(input: Option<String>) -> Result<(), String> {
             page.title = "Solara — Watch video".into();
             (vec![page], None, None, Vec::new(), None, Some(cached))
         }
-        Some(input) if input.starts_with('/') && input.contains("/watch/") => {
+        Some(input)
+            if input.starts_with('/')
+                && (input.contains("/watch/") || input.contains("/video/")) =>
+        {
             return Err("Use a full HTTP or HTTPS watch URL to supply its host".into());
         }
         Some(input) => {
@@ -133,7 +166,15 @@ pub fn run(input: Option<String>) -> Result<(), String> {
         .map_err(|error| format!("failed to create event loop: {error}"))?;
     let (video_tx, video_rx) = sync_channel(1);
     let proxy = event_loop.create_proxy();
-    let playback = if let Some(path) = youtube_media_path.as_ref() {
+    let playback = if let Some(source) = online_source {
+        println!("solara: online video playback source ready");
+        Some(video::spawn_online(
+            source,
+            0,
+            video_tx.clone(),
+            proxy.clone(),
+        ))
+    } else if let Some(path) = youtube_media_path.as_ref() {
         println!(
             "solara: cached video playback source ready at {}",
             path.display()
@@ -745,7 +786,7 @@ impl ApplicationHandler<VideoEvent> for GpuUiApp {
                     if !self.video_started {
                         self.video_started = true;
                         eprintln!(
-                            "solara: cached video frames active ({}x{} RGBA)",
+                            "solara: video frames active ({}x{} RGBA)",
                             video::FRAME_WIDTH,
                             video::FRAME_HEIGHT,
                         );
@@ -762,7 +803,7 @@ impl ApplicationHandler<VideoEvent> for GpuUiApp {
                 VideoPacket::Failed { request_id, error }
                     if request_id == self.active_request_id =>
                 {
-                    eprintln!("solara: cached YouTube playback stopped: {error}")
+                    eprintln!("solara: video playback stopped: {error}")
                 }
                 VideoPacket::CacheReady { request_id, path } => {
                     self.start_playback(request_id, path);
