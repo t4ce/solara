@@ -262,6 +262,14 @@ text/contour views. The Blueprint build and 15 host tests passed. The internal
 Solara entry. The earlier large FlowAndForms draw hit GPU `-12`; compact
 viewport geometry and bounded indexed draws allowed all four frames to render.
 
+### Native window collapse
+
+The browser hands its current 64x64 favicon to
+`frame.enable_collapse(64, 64, &favicon.pixels)?`. UI4 owns the collapse/restore
+menu and click gesture. The page, video layers, and normal frame dimensions stay
+intact while the kernel displays the favicon. A favicon change updates the
+registered image with the same call.
+
 ### Native image context menu
 
 Right-click a loaded PNG/JPEG and choose **OPEN IMG** to open the original image

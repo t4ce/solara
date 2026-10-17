@@ -39,7 +39,6 @@ const BROWSER_CADENCE_MS: u64 = 250;
 #[derive(Default)]
 struct MenuState {
     zoom_delta: i32,
-    collapse: bool,
     open_image: bool,
     pause_video: bool,
     close_video: bool,
@@ -48,7 +47,6 @@ fn menu_entries(image: bool, paused: Option<bool>) -> Vec<MenuEntry<'static, Men
     let mut entries: Vec<MenuEntry<'static, MenuState>> = vec![
         MenuEntry::new("+", |s| s.zoom_delta += 10),
         MenuEntry::new("-", |s| s.zoom_delta -= 10),
-        MenuEntry::new("collapse", |s| s.collapse = true),
         if image {
             MenuEntry::new("OPEN IMG", |s| s.open_image = true)
         } else {
@@ -118,19 +116,6 @@ async fn open_loaded_image(bytes: Arc<Vec<u8>>) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-struct Expanded {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-}
-struct Swoop {
-    started: u64,
-    from: (i32, i32),
-    to: (i32, i32),
-}
-
 struct Window {
     video: Option<crate::native_video::VideoSurface>,
     video_source: Option<String>,
@@ -142,9 +127,6 @@ struct Window {
     opening_image: Option<ImageOpening>,
     zoom_percent: i32,
     needs_reflow: bool,
-    expanded: Option<Expanded>,
-    swoop: Option<Swoop>,
-    icon_press: Option<(trueos::ui4_scene::CursorSource, u32, u32)>,
     favicon: crate::native_favicon::Favicon,
     resources: Arc<Resources>,
     images: Images,
@@ -249,6 +231,7 @@ impl Window {
         let mesh = painter.paint(layout.document())?;
         let mut favicon = crate::native_favicon::Favicon::default();
         favicon.navigate(resources.favicon.clone());
+        frame.enable_collapse(64, 64, &favicon.pixels)?;
         Ok(Self {
             video: None,
             video_source: None,
@@ -260,9 +243,6 @@ impl Window {
             opening_image: None,
             zoom_percent: 100,
             needs_reflow: false,
-            expanded: None,
-            swoop: None,
-            icon_press: None,
             favicon,
             resources,
             images: Images::default(),
@@ -294,9 +274,7 @@ impl Window {
         self.zoom_percent as f32 / 100.0
     }
     fn document_size(&self) -> (u32, u32) {
-        self.expanded
-            .map(|e| (e.width, e.height))
-            .unwrap_or((self.frame.width(), self.frame.height()))
+        (self.frame.width(), self.frame.height())
     }
     fn viewport(&self) -> Viewport {
         Viewport {
@@ -304,111 +282,6 @@ impl Window {
             zoom: self.zoom(),
             ..Default::default()
         }
-    }
-    fn collapse(&mut self) -> Result<(), Error> {
-        self.video = None;
-        self.video_source = None;
-        let (x, y) = self.frame.position()?;
-        if self.page_layer.is_some() {
-            let mut frame = Frame::open_streaming(x, y, self.frame.width(), self.frame.height())?;
-            frame.register_dynamic_context_menu()?;
-            self.page_layer = None;
-            self.frame = frame;
-        }
-        let expanded = Expanded {
-            x,
-            y,
-            width: self.frame.width(),
-            height: self.frame.height(),
-        };
-        self.frame.resize(64, 64)?;
-        self.expanded = Some(expanded);
-        self.frame.set_primary_activation(true)?;
-        self.swoop = Some(Swoop {
-            started: trueos::clock::monotonic_millis(),
-            from: (x, y),
-            to: (
-                x,
-                y.saturating_add(expanded.height.saturating_sub(64) as i32),
-            ),
-        });
-        self.icon_press = None;
-        self.dirty = true;
-        crate::parser_probe::report_info(format_args!(
-            "solara: collapsed window={} saved={}x{}@{},{} tile=64x64",
-            self.frame.window_id(),
-            expanded.width,
-            expanded.height,
-            x,
-            y
-        ));
-        Ok(())
-    }
-    fn expand(&mut self) -> Result<(), Error> {
-        let Some(saved) = self.expanded else {
-            return Ok(());
-        };
-        self.frame.resize(saved.width, saved.height)?;
-        self.frame.set_position(saved.x, saved.y)?;
-        self.frame.set_primary_activation(false)?;
-        self.expanded = None;
-        self.swoop = None;
-        self.icon_press = None;
-        self.dirty = true;
-        self.uploaded = false;
-        self.needs_reflow = true;
-        crate::parser_probe::report_info(format_args!(
-            "solara: expanded window={} restored={}x{}@{},{}",
-            self.frame.window_id(),
-            saved.width,
-            saved.height,
-            saved.x,
-            saved.y
-        ));
-        Ok(())
-    }
-    fn tick_collapsed(&mut self) -> Result<(), Error> {
-        if let Some(swoop) = &self.swoop {
-            let t = (trueos::clock::monotonic_millis().saturating_sub(swoop.started) as f32
-                / 180.0)
-                .min(1.0);
-            let eased = 1.0 - (1.0 - t).powi(3);
-            self.frame.set_position(
-                (swoop.from.0 as f32 + (swoop.to.0 - swoop.from.0) as f32 * eased).round() as i32,
-                (swoop.from.1 as f32 + (swoop.to.1 - swoop.from.1) as f32 * eased).round() as i32,
-            )?;
-            if t >= 1.0 {
-                self.swoop = None;
-            }
-        }
-        let mut restore = false;
-        while let Some(event) = self.frame.take_pointer_event()? {
-            if event.buttons_pressed & 1 != 0 {
-                self.icon_press = Some((event.source, event.x, event.y));
-            }
-            if let Some((source, x, y)) = self.icon_press {
-                if source != event.source || event.x.abs_diff(x) > 4 || event.y.abs_diff(y) > 4 {
-                    self.icon_press = None;
-                }
-            }
-            if event.buttons_released & 1 != 0 {
-                restore |= self.icon_press.take().is_some()
-                    && (0..64).contains(&event.local_x)
-                    && (0..64).contains(&event.local_y);
-            }
-        }
-        while self.frame.take_resize_event()?.is_some() {}
-        while self.frame.take_pan_event()?.is_some() {}
-        if restore {
-            return self.expand();
-        }
-        if self.dirty {
-            self.frame.begin(u32::from_le_bytes([13, 18, 27, 255]))?;
-            self.frame.write_opaque_rgba8(&self.favicon.pixels)?;
-            self.frame.publish(Damage::full(64, 64))?;
-            self.dirty = false;
-        }
-        Ok(())
     }
     fn tick_context_menu(&mut self) -> Result<(), Error> {
         if let Some(opening) = &mut self.opening_image {
@@ -430,7 +303,7 @@ impl Window {
                     event.local_x as f32 / self.zoom(),
                     event.local_y as f32 / self.zoom() + self.scroll_y,
                 ];
-                let image = if self.expanded.is_none() && self.opening_image.is_none() {
+                let image = if self.opening_image.is_none() {
                     self.mesh
                         .image_at(self.layout.document(), point)
                         .and_then(|quad| self.images.textures.get(&quad.url))
@@ -493,15 +366,8 @@ impl Window {
             self.layout.pointer_button(None, self.scroll_y, true);
             self.needs_reflow = true;
         }
-        if self.menu.collapse && self.expanded.is_none() {
-            self.collapse()?;
-        }
-        self.menu.collapse = false;
-        let icon_changed = self.favicon.poll();
-        if self.expanded.is_some() {
-            self.dirty |= icon_changed;
-            self.tick_collapsed()?;
-            return Ok(());
+        if self.favicon.poll() {
+            self.frame.enable_collapse(64, 64, &self.favicon.pixels)?;
         }
         if self.needs_reflow {
             self.layout.set_viewport(self.viewport())?;
@@ -747,6 +613,7 @@ impl Window {
                 Frame::open_streaming(x, y, w, h)?
             };
             frame.register_dynamic_context_menu()?;
+            frame.enable_collapse(64, 64, &self.favicon.pixels)?;
             let page_layer = if layered {
                 Some(frame.background()?)
             } else {
@@ -1103,6 +970,9 @@ impl Window {
         self.script_press = None;
         self.images.release(self.device);
         self.favicon.navigate(resources.favicon.clone());
+        self.frame
+            .enable_collapse(64, 64, &self.favicon.pixels)
+            .map_err(|e| format!("register favicon: {e:?}"))?;
         self.needs_reflow = true;
         self.layout = layout;
         self.resources = resources;
@@ -1329,7 +1199,7 @@ pub(crate) fn run_browser() -> Result<(), String> {
         if let Some(error) = window.script_error.take() {
             navigator.status(format!("Page error: {error}"));
         }
-        trueos::vsys::sleep_ms(if window.swoop.is_some() || window.video.is_some() {
+        trueos::vsys::sleep_ms(if window.video.is_some() {
             16
         } else {
             BROWSER_CADENCE_MS
